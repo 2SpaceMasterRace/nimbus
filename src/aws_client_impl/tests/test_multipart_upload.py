@@ -40,7 +40,7 @@ def test_multipart_upload_file_completes_on_success(
     complete = mocker.patch.object(c, "complete_multipart_upload", return_value=True)
     abort = mocker.patch.object(c, "abort_multipart_upload", return_value=True)
 
-    ok = c._multipart_upload_file(local_path=str(p), key="k")  # noqa: SLF001
+    ok = c._multipart_upload_file(local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
 
     assert ok is True
     abort.assert_not_called()
@@ -72,7 +72,7 @@ def test_multipart_upload_file_aborts_on_part_failure(
     abort = mocker.patch.object(c, "abort_multipart_upload", return_value=True)
 
     with pytest.raises(ClientError):
-        c._multipart_upload_file(local_path=str(p), key="k")  # noqa: SLF001
+        c._multipart_upload_file(local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
 
     abort.assert_called_once_with(key="k", upload_id="u1")
     complete.assert_not_called()

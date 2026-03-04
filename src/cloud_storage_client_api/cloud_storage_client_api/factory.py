@@ -55,7 +55,7 @@ def register_client(factory: Callable[[], CloudStorageClient]) -> None:
             controls all construction details (credentials, region, bucket).
 
     """
-    global _factory  # noqa: PLW0603
+    global _factory  # noqa: PLW0603  # The DI registry must be a module-level variable so all callers share the same instance; global assignment is the simplest correct approach here
     _factory = factory
 
 

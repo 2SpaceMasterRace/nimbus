@@ -35,7 +35,7 @@ The DI pattern means callers only ever touch the interface:
 
 ```python
 import aws_client_impl                               # registers S3 as a side effect
-from cloud_storage_client_api.src.factory import get_client
+from cloud_storage_client_api.factory import get_client
 
 client = get_client()                               # returns S3Client, typed as CloudStorageClient
 client.upload_file("report.csv", "reports/q1.csv")
@@ -249,14 +249,14 @@ ospsd-team-2/
 ├── src/
 │   ├── cloud_storage_client_api/       # Abstract interface package
 │   │   ├── pyproject.toml
-│   │   └── src/
+│   │   └── cloud_storage_client_api/
 │   │       ├── __init__.py
 │   │       ├── client.py               # CloudStorageClient ABC
 │   │       └── factory.py              # register_client() / get_client()
 │   └── aws_client_impl/                # S3 implementation package
 │       ├── pyproject.toml
 │       ├── tests/                      # Unit tests for this package
-│       └── src/
+│       └── aws_client_impl/
 │           ├── __init__.py             # Registers with factory on import
 │           └── s3_client.py            # S3Client implementation
 ├── tests/

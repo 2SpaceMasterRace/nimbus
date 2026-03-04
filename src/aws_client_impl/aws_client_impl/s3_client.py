@@ -42,12 +42,12 @@ class S3Client(CloudStorageClient):
         self._region_name = region_name
 
     @property
-    def _s3_client(self) -> Any:  # noqa: ANN401
+    def _s3_client(self) -> Any:  # noqa: ANN401  # boto3.Session.client() has no precise stub; the return type is a dynamic ServiceClient with no public type annotation
         """Boto3 low-level S3 client for the configured region."""
         return self._get_session().client("s3")
 
     @property
-    def _s3_resource(self) -> Any:  # noqa: ANN401
+    def _s3_resource(self) -> Any:  # noqa: ANN401  # boto3.resource() returns a dynamically generated ServiceResource with no public type annotation
         """Lazy boto3 S3 resource, initialised on first access.
 
         Reference: https://docs.aws.amazon.com/boto3/latest/reference/
@@ -789,7 +789,7 @@ class S3Client(CloudStorageClient):
         return True
 
 
-def get_client_impl(*, interactive: bool = False) -> S3Client:  # noqa: ARG001
+def get_client_impl(*, interactive: bool = False) -> S3Client:  # noqa: ARG001  # reserved for future CLI interactive-mode support; signature must match the factory callable protocol
     """Concrete factory that returns an S3Client instance."""
     region = os.environ.get("AWS_REGION", "us-east-1")
     # Handle case where environment variable is not properly expanded

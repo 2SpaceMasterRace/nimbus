@@ -21,7 +21,7 @@ def test_get_session_uses_aws_region_env_var(mocker: "MockerFixture") -> None:
     )
 
     c = S3Client(bucket_name="ignored")
-    session = c._get_session()  # noqa: SLF001
+    session = c._get_session()  # noqa: SLF001  # accessing private method directly to unit-test credential loading logic
 
     assert session is fake_session
     mock_boto3_session.assert_called_once_with(region_name="us-west-2")
@@ -33,4 +33,4 @@ def test_get_session_raises_key_error_when_env_missing(mocker: "MockerFixture") 
 
     c = S3Client(bucket_name="ignored")
     with pytest.raises(KeyError):
-        c._get_session()  # noqa: SLF001
+        c._get_session()  # noqa: SLF001  # accessing private method directly to unit-test credential loading logic

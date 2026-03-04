@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 def test_validate_file_obj_raises_value_error_when_not_readable(
-    mocker: "MockerFixture",  # noqa: ARG001
+    mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test _validate_file_obj raises ValueError when file_obj is not readable."""
     c = S3Client(bucket_name="ignored")
@@ -20,15 +20,15 @@ def test_validate_file_obj_raises_value_error_when_not_readable(
         def readable(self) -> bool:
             return False
 
-        def read(self, n: int = -1) -> bytes:  # noqa: ARG002
+        def read(self, n: int = -1) -> bytes:  # noqa: ARG002  # n is required by BinaryIO.read() protocol but intentionally unused in this stub
             return b""
 
     with pytest.raises(ValueError, match="readable"):
-        c._validate_file_obj(file_obj=NotReadable())  # type: ignore[arg-type]  # noqa: SLF001
+        c._validate_file_obj(file_obj=NotReadable())  # type: ignore[arg-type]  # noqa: SLF001  # passing intentionally invalid type to test validation; accessing private method directly to unit-test it
 
 
 def test_validate_file_obj_raises_type_error_when_text_mode(
-    mocker: "MockerFixture",  # noqa: ARG001
+    mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test _validate_file_obj raises TypeError when file_obj appears to be text."""
     c = S3Client(bucket_name="ignored")
@@ -42,11 +42,11 @@ def test_validate_file_obj_raises_type_error_when_text_mode(
             return "" if n == 0 else "hello"
 
     with pytest.raises(TypeError, match="binary mode"):
-        c._validate_file_obj(file_obj=TextLike())  # type: ignore[arg-type]  # noqa: SLF001
+        c._validate_file_obj(file_obj=TextLike())  # type: ignore[arg-type]  # noqa: SLF001  # passing intentionally invalid type to test validation; accessing private method directly to unit-test it
 
 
 def test_validate_file_obj_raises_value_error_when_not_file_like(
-    mocker: "MockerFixture",  # noqa: ARG001
+    mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test _validate_file_obj raises ValueError when file_obj lacks read()."""
     c = S3Client(bucket_name="ignored")
@@ -55,15 +55,15 @@ def test_validate_file_obj_raises_value_error_when_not_file_like(
         pass
 
     with pytest.raises(ValueError, match="file-like object"):
-        c._validate_file_obj(file_obj=NotAFile())  # type: ignore[arg-type]  # noqa: SLF001
+        c._validate_file_obj(file_obj=NotAFile())  # type: ignore[arg-type]  # noqa: SLF001  # passing intentionally invalid type to test validation; accessing private method directly to unit-test it
 
 
 def test_validate_file_obj_passes_for_binary_file_like(
-    mocker: "MockerFixture",  # noqa: ARG001
+    mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test _validate_file_obj does not raise for a valid binary file-like object."""
     c = S3Client(bucket_name="ignored")
 
     buf = io.BytesIO(b"abc")  # readable and binary
     # Should not raise:
-    c._validate_file_obj(file_obj=buf)  # noqa: SLF001
+    c._validate_file_obj(file_obj=buf)  # noqa: SLF001  # accessing private method directly to unit-test internal validation logic

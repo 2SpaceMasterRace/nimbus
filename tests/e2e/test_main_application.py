@@ -54,7 +54,7 @@ def test_main_script_runs_successfully() -> None:
     command = [sys.executable, str(main_script)]
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # noqa: S603  # command list is constructed from trusted constants (sys.executable + known file path); no shell interpolation or user input
             command,
             capture_output=True,
             text=True,
@@ -96,7 +96,7 @@ def test_main_script_handles_no_credentials_gracefully() -> None:
 
     command = [sys.executable, str(main_script)]
 
-    result = subprocess.run(  # noqa: S603
+    result = subprocess.run(  # noqa: S603  # command list is constructed from trusted constants (sys.executable + known file path); no shell interpolation or user input
         command,
         capture_output=True,
         text=True,
@@ -124,7 +124,7 @@ def test_main_script_syntax_is_valid() -> None:
     command = [sys.executable, "-m", "py_compile", str(main_script)]
 
     try:
-        subprocess.run(  # noqa: S603
+        subprocess.run(  # noqa: S603  # command list is constructed from trusted constants (sys.executable + known file path); no shell interpolation or user input
             command,
             capture_output=True,
             text=True,
@@ -159,7 +159,7 @@ except ImportError as e:
     command = [sys.executable, "-c", import_test_code]
 
     try:
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(  # noqa: S603  # command list is constructed from trusted constants (sys.executable + known file path); no shell interpolation or user input
             command,
             capture_output=True,
             text=True,

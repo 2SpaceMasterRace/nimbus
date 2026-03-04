@@ -20,7 +20,7 @@ def _client_error() -> ClientError:
 
 
 def test_upload_obj_raises_value_error_on_empty_key(
-    mocker: "MockerFixture",  # noqa: ARG001
+    mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test upload_obj raises ValueError when key is empty."""
     c = S3Client(bucket_name="my-bucket")
@@ -30,7 +30,7 @@ def test_upload_obj_raises_value_error_on_empty_key(
 
 
 def test_upload_obj_raises_value_error_on_leading_slash(
-    mocker: "MockerFixture",  # noqa: ARG001
+    mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test upload_obj raises ValueError when key starts with '/'."""
     c = S3Client(bucket_name="my-bucket")
@@ -75,7 +75,7 @@ def test_upload_obj_calls_multipart_when_unseekable(
         def readable(self) -> bool:
             return True
 
-        def read(self, n: int = -1) -> bytes:  # noqa: ARG002
+        def read(self, n: int = -1) -> bytes:  # noqa: ARG002  # n is required by BinaryIO.read() protocol but intentionally unused in this stub
             return b""  # no content needed for this unit test
 
         def seekable(self) -> bool:
@@ -84,7 +84,7 @@ def test_upload_obj_calls_multipart_when_unseekable(
     c = S3Client(bucket_name="my-bucket")
     mp = mocker.patch.object(c, "_multipart_upload_obj", return_value=True)
 
-    ok = c.upload_obj(file_obj=Unseekable(), key="k")  # type: ignore[arg-type]
+    ok = c.upload_obj(file_obj=Unseekable(), key="k")  # type: ignore[arg-type]  # intentionally passing a duck-typed stub that doesn't satisfy BinaryIO formally, to exercise the unseekable upload path
 
     assert ok is True
     mp.assert_called_once()
