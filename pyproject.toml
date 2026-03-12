@@ -27,11 +27,13 @@ package = false
 members = [
     "src/cloud_storage_client_api",
     "src/aws_client_impl",
+    "src/aws_client_service",
 ]
 
 [tool.uv.sources]
 cloud-storage-client-api = { workspace = true }
 aws-client-impl = { workspace = true }
+aws-client-service = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -104,4 +106,3 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
-
