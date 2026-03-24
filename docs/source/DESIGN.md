@@ -1,6 +1,6 @@
 # Design Document
 
-**Date:** 2026-02-28
+**Date:** 2026-03-24
 **Status:** In Progress
 
 ---
@@ -25,11 +25,11 @@ The long-term vision is to connect an LLM to this client so users can query thei
 - Handle large file uploads automatically using multipart upload.
 - Load all credentials from environment variables, never hardcoded.
 - Wire the implementation to the interface via Dependency Injection.
+- Expose the storage client as an HTTP service via FastAPI.
 
 ### Non-Goals
 
 - Supporting multiple cloud providers simultaneously in this iteration.
-- Building a server or API layer on top of the client (planned for future homework).
 - Implementing the LLM query layer in this iteration.
 
 ---
@@ -52,6 +52,22 @@ A `get_client()` factory function is also exposed. By default it raises `NotImpl
 - Multipart uploads are automatically aborted if any part fails, preventing lingering AWS charges.
 - `structlog` is used for structured logging throughout.
 - Authentication is handled entirely via environment variables.
+
+A third package, `aws_client_service`, wraps `aws_client_impl` and exposes the storage client as a FastAPI HTTP service:
+
+- `GET /health` — health check
+- `GET /` — root
+- `GET /download?bucket_name=<bucket>&object_name=<key>` — downloads an S3 object and streams it back as a file response
+
+The service uses FastAPI's `Depends()` mechanism to inject the `CloudStorageClient` at request time. `import aws_client_impl` at the top of `main.py` registers the S3 implementation as a side effect before the app starts. Temp files created for download responses are cleaned up via a `BackgroundTask` that runs after the response is sent.
+
+Error handling:
+
+| Condition | Status |
+|-----------|--------|
+| Object not found / `download_file` returns `False` | `404` |
+| Missing query parameter | `422` |
+| Storage exception | `502` |
 
 ---
 

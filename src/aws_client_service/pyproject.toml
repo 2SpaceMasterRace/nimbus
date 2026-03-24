@@ -2,10 +2,13 @@
 name = "aws-client-service"
 version = "0.1.0"
 description = "FastAPI service for AWS S3 cloud storage client"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn>=0.34.0",
+    "cloud-storage-client-api",
+    "aws-client-impl",
+    "structlog>=25.5.0",
 ]
 
 [build-system]

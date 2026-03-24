@@ -26,3 +26,69 @@
   [SUB-TODO] Learn how to write tests with comprehensive error modeling with typed domain exceptions \
   [SUB-TODO] Take a crash course on proper API design \
   [SUB-TODO] Look into resilience patterns (retries, rate-limit handling, idempotency)
+
+[NOTES] Code Review
+  How To Review This Like A Senior Engineer
+
+  Here is the senior review loop I want you to internalize:
+
+  1. What is the contract?
+  2. What are the resources?
+  3. What can fail?
+  4. What happens on cleanup?
+  5. Do tests prove the important properties?
+
+  Applied here:
+
+  1. Contract
+
+  - endpoint accepts bucket and object name
+  - dependency provides storage client
+  - response is a file download
+
+  2. Resources
+
+  - temp file on disk
+  - storage client instance
+  - HTTP response stream
+
+  3. Failures
+
+  - missing params
+  - storage failure
+  - object not found
+  - temp file create/delete issue
+  - hidden import/DI registration issues
+
+  4. Cleanup
+
+  - failure cleanup exists
+  - success cleanup missing
+
+  5. Test truth
+
+  - tests prove happy path and some errors
+  - tests do not prove lifecycle cleanup
+
+  That is the difference between “I read the diff” and “I reviewed the code”.
+
+ Most Important Improvement To Learn From This Commit
+
+  The biggest lesson is not “remember to delete temp files.”
+
+  It is this:
+
+  Whenever code creates a resource,
+  ask who owns its full lifecycle.
+
+  Resource examples:
+
+  - files
+  - DB connections
+  - network sockets
+  - locks
+  - temp directories
+  - background jobs
+  - transactions
+
+  That one habit will make your reviews much sharper.

@@ -26,10 +26,11 @@ We welcome contributions of all kinds: bug fixes, new features, documentation im
 
 This library wraps AWS S3 behind a clean, provider-agnostic Python interface. The goal is to let application code work with cloud storage without knowing anything about boto3, regions, or multipart upload mechanics.
 
-The project is split into two packages:
+The project is split into three packages:
 
 - **`cloud_storage_client_api`** — defines the abstract `CloudStorageClient` base class (the contract). No AWS deps, no boto3. Any cloud provider could implement this.
 - **`aws_client_impl`** — the concrete S3 implementation. Uses boto3 under the hood. Wires itself into the interface automatically via **Dependency Injection** when imported.
+- **`aws_client_service`** — a FastAPI HTTP service that wraps `aws_client_impl` and exposes the core methods over HTTP.
 
 The DI pattern means callers only ever touch the interface:
 
@@ -41,7 +42,9 @@ client = get_client()                               # returns S3Client, typed as
 client.upload_file("report.csv", "reports/q1.csv")
 ```
 
-Swapping to a different provider in the future only requires writing a new implementation package — no application code changes.
+The same pattern applies inside the service: `aws_client_service.main` imports `aws_client_impl` at startup, which registers S3 with the factory. FastAPI then injects the client into each request handler via `Depends(get_storage_client)`.
+
+Swapping to a different provider in the future only requires writing a new implementation package — neither the application code nor the service changes.
 
 ---
 
@@ -146,13 +149,26 @@ You should see structured log output listing the files in your bucket. If you se
 
 ## Running the Code
 
-With credentials set:
+**Python example** — with credentials set:
 
 ```shell
 uv run python main.py
 ```
 
 This demonstrates the full flow: DI wiring → client creation → S3 API call → response handling.
+
+**FastAPI service** — starts the HTTP server on port 8000:
+
+```shell
+uv run uvicorn aws_client_service.main:app --reload
+```
+
+Download a file via the service:
+
+```shell
+curl "http://localhost:8000/download?bucket_name=my-bucket&object_name=data.csv" \
+  --output data.csv
+```
 
 ---
 
@@ -253,13 +269,18 @@ ospsd-team-2/
 │   │       ├── __init__.py
 │   │       ├── client.py               # CloudStorageClient ABC
 │   │       └── factory.py              # register_client() / get_client()
-│   └── aws_client_impl/                # S3 implementation package
+│   ├── aws_client_impl/                # S3 implementation package
+│   │   ├── pyproject.toml
+│   │   ├── tests/                      # Unit tests for this package
+│   │   └── aws_client_impl/
+│   │       ├── __init__.py             # Registers with factory on import
+│   │       └── s3_client.py            # S3Client implementation
+│   └── aws_client_service/             # FastAPI HTTP service package
 │       ├── pyproject.toml
-│       ├── tests/                      # Unit tests for this package
-│       └── aws_client_impl/
-│           ├── __init__.py             # Registers with factory on import
-│           └── s3_client.py            # S3Client implementation
+│       └── aws_client_service/
+│           └── main.py                 # GET /health, GET /, GET /download
 ├── tests/
+│   ├── aws_service_test/               # Unit tests for the FastAPI service
 │   ├── integration/                    # DI wiring tests
 │   └── e2e/                            # Full end-to-end tests
 ├── docs/

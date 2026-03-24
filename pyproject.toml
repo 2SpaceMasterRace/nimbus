@@ -16,6 +16,7 @@ dependencies = [
     "boto3-stubs>=1.42.54",
     "boto3[crt]>=1.42.54",
     "coverage>=7.13.4",
+    "httpx>=0.28.1",
     "rich>=14.3.3",
     "structlog>=25.5.0",
 ]

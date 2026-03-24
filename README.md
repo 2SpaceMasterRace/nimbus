@@ -29,20 +29,24 @@ client.download_file("my-bucket", "data.csv", "local/copy.csv")  # download it b
 
 ## Architecture
 
-The project is a [`uv` workspace](https://docs.astral.sh/uv/concepts/workspaces/) with two installable packages:
+The project is a [`uv` workspace](https://docs.astral.sh/uv/concepts/workspaces/) with three installable packages:
 
 ```
 ospsd-team-2/
 ├── src/
 │   ├── cloud_storage_client_api/   # The abstract interface — no AWS deps, no boto3
-│   │   └── src/
+│   │   └── cloud_storage_client_api/
 │   │       ├── client.py           # CloudStorageClient ABC (the contract)
 │   │       └── factory.py          # get_client() / register_client() DI factory
-│   └── aws_client_impl/            # The concrete AWS S3 implementation
-│       └── src/
-│           ├── __init__.py         # Auto-registers with factory on import
-│           └── s3_client.py        # S3Client — implements CloudStorageClient via boto3
+│   ├── aws_client_impl/            # The concrete AWS S3 implementation
+│   │   └── aws_client_impl/
+│   │       ├── __init__.py         # Auto-registers with factory on import
+│   │       └── s3_client.py        # S3Client — implements CloudStorageClient via boto3
+│   └── aws_client_service/         # FastAPI HTTP service — wraps aws_client_impl
+│       └── aws_client_service/
+│           └── main.py             # GET /health, GET /, GET /download
 ├── tests/
+│   ├── aws_service_test/           # Unit tests for the FastAPI service
 │   ├── integration/                # Tests that verify DI wiring works end-to-end
 │   └── e2e/                        # Full workflow tests against real AWS infrastructure
 ├── main.py                         # Example entry point demonstrating the full flow
@@ -127,13 +131,26 @@ You can put these in a local `.env` file — it is listed in `.gitignore` and wi
 
 ## Running the Application
 
-With credentials set:
+**CLI example** — with credentials set:
 
 ```shell
 uv run python main.py
 ```
 
 This creates a client via DI, lists files in your bucket, and prints them.
+
+**FastAPI service** — starts the HTTP server on port 8000:
+
+```shell
+uv run uvicorn aws_client_service.main:app --reload
+```
+
+Then download a file:
+
+```shell
+curl "http://localhost:8000/download?bucket_name=my-bucket&object_name=data.csv" \
+  --output data.csv
+```
 
 ---
 
@@ -191,6 +208,8 @@ See [DESIGN.md](DESIGN.md) for architecture decisions and context.
 | Package | Purpose |
 |---|---|
 | `boto3` | AWS SDK for Python |
+| `fastapi` | Web framework for the HTTP service |
+| `uvicorn` | ASGI server for running the FastAPI app |
 | `structlog` | Structured, machine-readable logging |
 | `ruff` | Linter and formatter (replaces flake8 + isort + black) |
 | `mypy` | Static type checker, run in `--strict` mode |
