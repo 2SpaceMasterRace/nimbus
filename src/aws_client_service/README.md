@@ -13,6 +13,7 @@ This package is the deployment unit. It wraps `aws-client-impl` and exposes its 
 | `GET` | `/health` | — | `200 {"status": "ok"}` | — |
 | `GET` | `/` | — | `200 {"message": "Hello World"}` | — |
 | `GET` | `/download` | `bucket_name`, `object_name` | `200` file download | `404` not found, `422` missing params, `502` storage error |
+| `DELETE` | `/files/{container}/{object_name}` | `container`, `object_name` (path) | `200 {"ok": true}` | `404` not found, `502` storage error |
 
 ### `GET /download`
 
@@ -33,6 +34,29 @@ Downloads an object from S3 and streams it back as a file response.
 - `502` — unexpected storage exception (details logged server-side)
 
 The response filename is set to the basename of `object_name` (e.g. `data.csv` for `reports/data.csv`). The temp file created during the download is deleted automatically after the response is sent.
+
+### `DELETE /files/{container}/{object_name}`
+
+Deletes an object from an S3 bucket and returns a JSON confirmation.
+
+**Path parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `container` | `string` | yes | S3 bucket name |
+| `object_name` | `string` | yes | S3 object key (e.g. `reports/data.csv`) |
+
+**Responses:**
+
+- `200` — `{"ok": true}` — object deleted successfully
+- `404` — object not found or `delete_file` returned `False`
+- `502` — unexpected storage exception (details logged server-side)
+
+Example:
+
+```bash
+curl -X DELETE "http://localhost:8000/files/my-bucket/reports/data.csv"
+```
 
 ## Dependencies
 

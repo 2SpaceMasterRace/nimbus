@@ -59,6 +59,33 @@ The temp file created during the download is deleted automatically after the res
 
 ---
 
+### `DELETE /files/{container}/{object_name}`
+
+Delete an object from an S3 bucket.
+
+**Path parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `container` | string | yes | S3 bucket name |
+| `object_name` | string | yes | S3 object key (e.g. `reports/data.csv`) |
+
+**Responses:**
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `{"ok": true}` — object deleted successfully |
+| `404` | Object not found or storage client returned failure |
+| `502` | Unexpected storage exception (details logged server-side) |
+
+**Example:**
+
+```bash
+curl -X DELETE "http://localhost:8000/files/my-bucket/reports/data.csv"
+```
+
+---
+
 ## Python Client (`cloud_storage_client_api`)
 
 ```{eval-rst}

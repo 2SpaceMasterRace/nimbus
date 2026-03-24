@@ -2,8 +2,8 @@
 
 This module verifies that the FastAPI ``Depends()`` mechanism correctly
 resolves ``get_storage_client`` to a concrete ``CloudStorageClient``
-implementation, and that the download endpoint works end-to-end with a
-mocked storage backend.
+implementation, and that endpoints work end-to-end with a mocked storage
+backend.
 """
 
 from __future__ import annotations
@@ -76,5 +76,30 @@ def test_download_endpoint_uses_injected_client(
         )
         assert response.status_code == HTTP_OK
         assert response.text == "hello from mock"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.circleci
+def test_delete_endpoint_uses_injected_client(
+    mocker: MockerFixture,
+) -> None:
+    """The delete endpoint resolves the DI client and returns JSON confirmation."""
+    mock_client = mocker.create_autospec(
+        CloudStorageClient,
+        instance=True,
+    )
+    mock_client.delete_file.return_value = True
+
+    app.dependency_overrides[get_storage_client] = lambda: mock_client
+    try:
+        client = TestClient(app)
+        response = client.delete("/files/test-bucket/some-key.txt")
+        assert response.status_code == HTTP_OK
+        assert response.json() == {"ok": True}
+        mock_client.delete_file.assert_called_once_with(
+            "test-bucket",
+            "some-key.txt",
+        )
     finally:
         app.dependency_overrides.clear()

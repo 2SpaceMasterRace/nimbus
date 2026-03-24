@@ -44,7 +44,7 @@ ospsd-team-2/
 │   │       └── s3_client.py        # S3Client — implements CloudStorageClient via boto3
 │   └── aws_client_service/         # FastAPI HTTP service — wraps aws_client_impl
 │       └── aws_client_service/
-│           └── main.py             # GET /health, GET /, GET /download
+│           └── main.py             # GET /health, GET /, GET /download, DELETE /files/...
 ├── tests/
 │   ├── aws_service_test/           # Unit tests for the FastAPI service
 │   ├── integration/                # Tests that verify DI wiring works end-to-end
@@ -150,6 +150,12 @@ Then download a file:
 ```shell
 curl "http://localhost:8000/download?bucket_name=my-bucket&object_name=data.csv" \
   --output data.csv
+```
+
+Delete an object:
+
+```shell
+curl -X DELETE "http://localhost:8000/files/my-bucket/data.csv"
 ```
 
 ---

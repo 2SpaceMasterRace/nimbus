@@ -63,6 +63,12 @@ $ curl "http://localhost:8000/download?bucket_name=my-bucket&object_name=data.cs
     --output data.csv
 ```
 
+Delete an object via HTTP:
+
+```console
+$ curl -X DELETE "http://localhost:8000/files/my-bucket/data.csv"
+```
+
 See {doc}`api` for the full endpoint reference.
 
 ## Next Steps

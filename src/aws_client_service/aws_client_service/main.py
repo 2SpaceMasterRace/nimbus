@@ -9,6 +9,7 @@ from cloud_storage_client_api.client import CloudStorageClient
 from cloud_storage_client_api.factory import get_client
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 import aws_client_impl  # noqa: F401  # triggers dependency injection
@@ -16,6 +17,12 @@ import aws_client_impl  # noqa: F401  # triggers dependency injection
 log: Any = structlog.get_logger()
 
 app = FastAPI(title="AWS S3 Cloud Storage Service", version="0.1.0")
+
+
+class OperationResult(BaseModel):
+    """JSON response model for operations that return a boolean result."""
+
+    ok: bool
 
 
 def get_storage_client() -> CloudStorageClient:
@@ -98,3 +105,46 @@ def download_file(
         filename=PurePosixPath(object_name).name,
         background=BackgroundTask(remove_temp_file, tmp_path),
     )
+
+
+@app.delete("/files/{container}/{object_name:path}")
+def delete_object(
+    container: str,
+    object_name: str,
+    client: Annotated[CloudStorageClient, Depends(get_storage_client)],
+) -> OperationResult:
+    """Delete an object from a bucket (container).
+
+    Args:
+        container: The name of the bucket containing the object.
+        object_name: The key of the object to delete.
+        client: Injected cloud storage client.
+
+    Returns:
+        OperationResult with ok=True on success.
+
+    Raises:
+        HTTPException: 502 if the storage backend raises an exception.
+        HTTPException: 404 if the deletion returns failure.
+
+    """
+    try:
+        ok = client.delete_file(container, object_name)
+    except Exception as exc:
+        log.exception(
+            "Delete failed",
+            container=container,
+            object_name=object_name,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Delete failed due to a storage error",
+        ) from exc
+
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail="Object not found or delete failed",
+        )
+
+    return OperationResult(ok=True)

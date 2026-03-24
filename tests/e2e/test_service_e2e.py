@@ -93,6 +93,29 @@ def test_service_openapi_schema_includes_download() -> None:
 
 
 @pytest.mark.circleci
+def test_service_openapi_schema_includes_delete() -> None:
+    """Tests that the OpenAPI schema exposes the delete endpoint."""
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == HTTP_OK
+
+    schema = response.json()
+    delete_path = "/files/{container}/{object_name}"
+    assert delete_path in schema["paths"]
+
+    delete_op = schema["paths"][delete_path]["delete"]
+    param_names = [p["name"] for p in delete_op["parameters"]]
+    assert "container" in param_names
+    assert "object_name" in param_names
+
+    response_schema = delete_op["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]
+    assert response_schema["$ref"].endswith("/OperationResult")
+
+
+@pytest.mark.circleci
 def test_service_health_endpoint_e2e() -> None:
     """Tests that the /health endpoint returns 200 with expected payload."""
     client = TestClient(app)

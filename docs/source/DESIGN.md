@@ -58,6 +58,7 @@ A third package, `aws_client_service`, wraps `aws_client_impl` and exposes the s
 - `GET /health` — health check
 - `GET /` — root
 - `GET /download?bucket_name=<bucket>&object_name=<key>` — downloads an S3 object and streams it back as a file response
+- `DELETE /files/{container}/{object_name}` — deletes an S3 object and returns JSON confirmation
 
 The service uses FastAPI's `Depends()` mechanism to inject the `CloudStorageClient` at request time. `import aws_client_impl` at the top of `main.py` registers the S3 implementation as a side effect before the app starts. Temp files created for download responses are cleaned up via a `BackgroundTask` that runs after the response is sent.
 
@@ -65,8 +66,8 @@ Error handling:
 
 | Condition | Status |
 |-----------|--------|
-| Object not found / `download_file` returns `False` | `404` |
-| Missing query parameter | `422` |
+| Object not found / operation returns `False` | `404` |
+| Missing query or path parameter | `422` |
 | Storage exception | `502` |
 
 ---

@@ -278,7 +278,7 @@ ospsd-team-2/
 │   └── aws_client_service/             # FastAPI HTTP service package
 │       ├── pyproject.toml
 │       └── aws_client_service/
-│           └── main.py                 # GET /health, GET /, GET /download
+│           └── main.py                 # GET /health, GET /, GET /download, DELETE /files/...
 ├── tests/
 │   ├── aws_service_test/               # Unit tests for the FastAPI service
 │   ├── integration/                    # DI wiring tests
