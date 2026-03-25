@@ -9,6 +9,7 @@ from typing import Any, BinaryIO
 import boto3
 import structlog
 from botocore.exceptions import ClientError
+
 from cloud_storage_client_api.client import CloudStorageClient
 
 # Constants

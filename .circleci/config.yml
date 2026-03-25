@@ -25,7 +25,7 @@ commands:
     steps:
       - run:
           name: Sync dependencies
-          command: uv sync --all-packages
+          command: uv sync --all-packages --all-groups
   aws-setup:
     description: "Set up AWS CLI with the provided credentials"
     steps:

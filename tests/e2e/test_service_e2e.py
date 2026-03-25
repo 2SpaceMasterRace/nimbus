@@ -10,8 +10,9 @@ import sys
 from pathlib import Path
 
 import pytest
-from aws_client_service.main import app
 from fastapi.testclient import TestClient
+
+from aws_client_service.main import app
 
 pytestmark = pytest.mark.e2e
 

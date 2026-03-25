@@ -8,10 +8,10 @@ to know which class they receive.
 
 import pytest
 from aws_client_impl.s3_client import S3Client
-from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.factory import get_client
 
 import aws_client_impl  # noqa: F401  — registers S3Client factory as side-effect
+from cloud_storage_client_api.client import CloudStorageClient
+from cloud_storage_client_api.factory import get_client
 
 pytestmark = pytest.mark.integration
 

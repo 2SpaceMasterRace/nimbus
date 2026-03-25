@@ -11,9 +11,8 @@ The factory function (``get_client_impl``) reads AWS_BUCKET_NAME and
 AWS_REGION from environment variables so credentials are never hardcoded.
 """
 
-from cloud_storage_client_api.factory import register_client
-
 from aws_client_impl.s3_client import get_client_impl
+from cloud_storage_client_api.factory import register_client
 
 # Register the S3 factory at import time. This is the DI wiring: importing
 # this package is sufficient to make get_client() return an S3Client.
