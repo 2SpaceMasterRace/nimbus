@@ -2,12 +2,12 @@
 
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Annotated, Any
+from typing import Annotated, Any 
 
 import structlog
 from cloud_storage_client_api.client import CloudStorageClient
 from cloud_storage_client_api.factory import get_client
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
@@ -148,3 +148,25 @@ def delete_object(
         )
 
     return OperationResult(ok=True)
+
+
+def validate_prefix(prefix: str | None = Query(None)) -> str:
+    if prefix is None:
+        raise HTTPException(status_code=422, detail="prefix is required")
+    return prefix
+
+@app.get("/files")
+def list_files(
+    prefix: Annotated[str, Depends(validate_prefix)],
+    client: Annotated[CloudStorageClient, Depends(get_storage_client)],
+) -> dict[str, list[str]]:
+    try:
+        files = client.list_files(prefix)
+    except Exception as exc:
+        log.exception("List files failed", prefix=prefix)
+        raise HTTPException(
+            status_code=502,
+            detail="List files failed due to a storage error",
+        ) from exc
+
+    return {"files": files}
