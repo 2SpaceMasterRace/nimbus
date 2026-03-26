@@ -76,6 +76,29 @@ def test_service_module_imports() -> None:
 
 
 @pytest.mark.circleci
+def test_service_openapi_schema_includes_upload() -> None:
+    """Tests that the OpenAPI schema exposes the upload endpoint."""
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == HTTP_OK
+
+    schema = response.json()
+    upload_path = "/files/{container}/{object_name}"
+    assert upload_path in schema["paths"]
+
+    upload_op = schema["paths"][upload_path]["post"]
+    param_names = [p["name"] for p in upload_op["parameters"]]
+    assert "container" in param_names
+    assert "object_name" in param_names
+
+    response_schema = upload_op["responses"]["200"]["content"]["application/json"][
+        "schema"
+    ]
+    assert response_schema["$ref"].endswith("/OperationResult")
+
+
+@pytest.mark.circleci
 def test_service_openapi_schema_includes_download() -> None:
     """Tests that the OpenAPI schema exposes the /download endpoint."""
     client = TestClient(app)

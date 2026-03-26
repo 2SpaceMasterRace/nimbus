@@ -9,6 +9,7 @@ dependencies = [
     "cloud-storage-client-api",
     "aws-client-impl",
     "structlog>=25.5.0",
+    "python-multipart>=0.0.22",
 ]
 
 [build-system]

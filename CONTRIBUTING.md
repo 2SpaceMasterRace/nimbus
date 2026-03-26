@@ -26,10 +26,11 @@ We welcome contributions of all kinds: bug fixes, new features, documentation im
 
 This library wraps AWS S3 behind a clean, provider-agnostic Python interface. The goal is to let application code work with cloud storage without knowing anything about boto3, regions, or multipart upload mechanics.
 
-The project is split into two packages:
+The project is split into three packages:
 
 - **`cloud_storage_client_api`** — defines the abstract `CloudStorageClient` base class (the contract). No AWS deps, no boto3. Any cloud provider could implement this.
 - **`aws_client_impl`** — the concrete S3 implementation. Uses boto3 under the hood. Wires itself into the interface automatically via **Dependency Injection** when imported.
+- **`aws_client_service`** — a FastAPI HTTP service that exposes `aws_client_impl` over HTTP. Supports file upload, download, and delete via REST endpoints.
 
 The DI pattern means callers only ever touch the interface:
 
@@ -151,6 +152,27 @@ With credentials set:
 ```shell
 uv run python main.py
 ```
+**FastAPI service** — starts the HTTP server on port 8000:
+```shell
+uv run uvicorn aws_client_service.main:app --reload
+```
+
+Upload an object:
+```shell
+curl -X POST "http://localhost:8000/files/my-bucket/data.csv" \
+  -F "file=@/path/to/local/data.csv"
+```
+
+Then download a file:
+```shell
+curl "http://localhost:8000/download?bucket_name=my-bucket&object_name=data.csv" \
+  --output data.csv
+```
+
+Delete an object:
+```shell
+curl -X DELETE "http://localhost:8000/files/my-bucket/data.csv"
+```
 
 This demonstrates the full flow: DI wiring → client creation → S3 API call → response handling.
 
@@ -253,12 +275,16 @@ ospsd-team-2/
 │   │       ├── __init__.py
 │   │       ├── client.py               # CloudStorageClient ABC
 │   │       └── factory.py              # register_client() / get_client()
-│   └── aws_client_impl/                # S3 implementation package
+│   ├── aws_client_impl/                # S3 implementation package
+│   │   ├── pyproject.toml
+│   │   ├── tests/                      # Unit tests for this package
+│   │   └── aws_client_impl/
+│   │       ├── __init__.py             # Registers with factory on import
+│   │       └── s3_client.py            # S3Client implementation
+│   └── aws_client_service/             # FastAPI HTTP service
 │       ├── pyproject.toml
-│       ├── tests/                      # Unit tests for this package
-│       └── aws_client_impl/
-│           ├── __init__.py             # Registers with factory on import
-│           └── s3_client.py            # S3Client implementation
+│       └── aws_client_service/
+│           └── main.py                 # GET /health, GET /, POST /files/..., GET /download, DELETE /files/...
 ├── tests/
 │   ├── integration/                    # DI wiring tests
 │   └── e2e/                            # Full end-to-end tests

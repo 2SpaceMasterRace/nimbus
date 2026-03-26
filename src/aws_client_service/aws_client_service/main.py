@@ -7,7 +7,7 @@ from typing import Annotated, Any
 import structlog
 from cloud_storage_client_api.client import CloudStorageClient
 from cloud_storage_client_api.factory import get_client
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
@@ -45,6 +45,46 @@ async def health() -> dict[str, str]:
 async def root() -> dict[str, str]:
     """Root endpoint."""
     return {"message": "Hello World"}
+
+
+@app.post("/files/{container}/{object_name:path}")
+def upload_object(
+    container: str,
+    object_name: str,
+    file: UploadFile,
+    client: Annotated[CloudStorageClient, Depends(get_storage_client)],
+) -> OperationResult:
+    """Upload an object to a bucket (container).
+
+    Args:
+        container: The name of the target bucket.
+        object_name: The key of the object to upload.
+        file: The file to upload.
+        client: Injected cloud storage client.
+
+    Returns:
+        OperationResult with ok=True on success.
+
+    Raises:
+        HTTPException: 502 if the storage backend raises an exception.
+        HTTPException: 400 if the key is invalid (empty or leading slash).
+
+    """
+    try:
+        client.upload_obj(file.file, object_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        log.exception(
+            "Upload failed",
+            container=container,
+            object_name=object_name,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Upload failed due to a storage error",
+        ) from exc
+    return OperationResult(ok=True)
 
 
 @app.get("/download", response_class=FileResponse)
