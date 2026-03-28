@@ -56,6 +56,13 @@ Start the FastAPI server:
 $ uv run uvicorn aws_client_service.main:app --reload
 ```
 
+Upload a file via HTTP:
+
+```console
+$ curl -X POST "http://localhost:8000/files/my-bucket/data.csv" \
+    -F "file=@/path/to/local/data.csv"
+```
+
 Download a file via HTTP:
 
 ```console

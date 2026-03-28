@@ -44,7 +44,7 @@ ospsd-team-2/
 │   │       └── s3_client.py        # S3Client — implements CloudStorageClient via boto3
 │   └── aws_client_service/         # FastAPI HTTP service — wraps aws_client_impl
 │       └── aws_client_service/
-│           └── main.py             # GET /health, GET /, GET /download, DELETE /files/...
+│           └── main.py             # GET /health, GET /, POST /files/..., GET /download, DELETE /files/...
 ├── tests/
 │   ├── aws_service_test/           # Unit tests for the FastAPI service
 │   ├── integration/                # Tests that verify DI wiring works end-to-end
@@ -143,6 +143,13 @@ This creates a client via DI, lists files in your bucket, and prints them.
 
 ```shell
 uv run uvicorn aws_client_service.main:app --reload
+```
+
+Upload an object:
+
+```shell
+curl -X POST "http://localhost:8000/files/my-bucket/data.csv" \
+  -F "file=@/path/to/local/data.csv"
 ```
 
 Then download a file:

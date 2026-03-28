@@ -28,6 +28,41 @@ Root endpoint.
 
 ---
 
+### `POST /files/{container}/{object_name}`
+
+Upload a file to an S3 bucket.
+
+**Path parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `container` | string | yes | S3 bucket name |
+| `object_name` | string | yes | S3 object key (e.g. `reports/data.csv`) |
+
+**Form data:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | binary | yes | File to upload (multipart form data) |
+
+**Responses:**
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `{"ok": true}` — file uploaded successfully |
+| `400` | Invalid key (empty or starts with a leading slash) |
+| `422` | Missing or invalid parameters |
+| `502` | Unexpected storage exception (details logged server-side) |
+
+**Example:**
+
+```bash
+curl -X POST "http://localhost:8000/files/my-bucket/reports/data.csv" \
+  -F "file=@/path/to/local/data.csv"
+```
+
+---
+
 ### `GET /download`
 
 Download an S3 object and stream it back as a file.

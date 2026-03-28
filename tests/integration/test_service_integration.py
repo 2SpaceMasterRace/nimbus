@@ -48,6 +48,34 @@ def test_service_health_with_real_app() -> None:
 
 
 @pytest.mark.circleci
+def test_upload_endpoint_uses_injected_client(
+    mocker: MockerFixture,
+) -> None:
+    """The upload endpoint resolves the DI client and returns JSON confirmation."""
+    mock_client = mocker.create_autospec(
+        CloudStorageClient,
+        instance=True,
+    )
+    mock_client.upload_obj.return_value = True
+
+    app.dependency_overrides[get_storage_client] = lambda: mock_client
+    try:
+        client = TestClient(app)
+        response = client.post(
+            "/files/test-bucket/some-key.txt",
+            files={
+                "file": ("some-key.txt", b"fake content", "application/octet-stream")
+            },
+        )
+        assert response.status_code == HTTP_OK
+        assert response.json() == {"ok": True}
+        args, _kwargs = mock_client.upload_obj.call_args
+        assert args[1] == "some-key.txt"
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.circleci
 def test_download_endpoint_uses_injected_client(
     mocker: MockerFixture,
 ) -> None:

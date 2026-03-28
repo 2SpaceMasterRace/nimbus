@@ -1,6 +1,6 @@
 # Design Document
 
-**Date:** 2026-03-24
+**Date:** 2026-03-27
 **Status:** In Progress
 
 ---
@@ -9,7 +9,7 @@
 
 This project is a clean Python wrapper around AWS S3. AWS S3 is a cloud object storage service that lets you store files and data at scale, but interacting with it directly requires dealing with boto3, AWS credentials, region configuration, and provider specific types. The goal is to hide all of that behind a simple, provider agnostic interface so that callers never need to know they are talking to S3.
 
-The project is split into two components: `cloud_storage_client_api` which defines the abstract contract, and `aws_client_impl` which fulfills that contract using AWS S3 and boto3.
+The project is split into three components: `cloud_storage_client_api` which defines the abstract contract, `aws_client_impl` which fulfills that contract using AWS S3 and boto3, and `aws_client_service` which exposes the implementation over HTTP via FastAPI.
 
 The long-term vision is to connect an LLM to this client so users can query their cloud storage in natural language — for example, asking how many files were uploaded in a given month and receiving a direct answer.
 
@@ -25,7 +25,7 @@ The long-term vision is to connect an LLM to this client so users can query thei
 - Handle large file uploads automatically using multipart upload.
 - Load all credentials from environment variables, never hardcoded.
 - Wire the implementation to the interface via Dependency Injection.
-- Expose the storage client as an HTTP service via FastAPI.
+- Expose the storage interface over HTTP via a FastAPI service supporting upload, download, and delete.
 
 ### Non-Goals
 
@@ -57,15 +57,17 @@ A third package, `aws_client_service`, wraps `aws_client_impl` and exposes the s
 
 - `GET /health` — health check
 - `GET /` — root
+- `POST /files/{container}/{object_name}` — uploads a file to an S3 bucket via multipart form data
 - `GET /download?bucket_name=<bucket>&object_name=<key>` — downloads an S3 object and streams it back as a file response
 - `DELETE /files/{container}/{object_name}` — deletes an S3 object and returns JSON confirmation
 
-The service uses FastAPI's `Depends()` mechanism to inject the `CloudStorageClient` at request time. `import aws_client_impl` at the top of `main.py` registers the S3 implementation as a side effect before the app starts. Temp files created for download responses are cleaned up via a `BackgroundTask` that runs after the response is sent.
+The service uses FastAPI's `Depends()` mechanism to inject the `CloudStorageClient` at request time. `import aws_client_impl` at the top of `main.py` registers the S3 implementation as a side effect before the app starts. Temp files created for download responses are cleaned up via a `BackgroundTask` that runs after the response is sent. File uploads use `UploadFile` and `python-multipart` for multipart form data parsing.
 
 Error handling:
 
 | Condition | Status |
 |-----------|--------|
+| Invalid key (empty or leading slash) | `400` |
 | Object not found / operation returns `False` | `404` |
 | Missing query or path parameter | `422` |
 | Storage exception | `502` |
@@ -74,10 +76,10 @@ Error handling:
 
 ## Cross-Cutting Concerns
 
-- Credentials must never be hardcoded. All secrets are loaded from environment variables at runtime for local development. In CI, the pipeline authenticates via OIDC and assumes an IAM role directly — no long-lived access keys are stored anywhere. Missing variables will raise a `KeyError` immediately, which is intentional
+- Credentials must never be hardcoded. All secrets are loaded from environment variables at runtime for local development. In CI, the pipeline authenticates via OIDC and assumes an IAM role directly — no long-lived access keys are stored anywhere. Missing variables will raise a `KeyError` immediately, which is intentional.
 - The interface has zero coupling to the implementation. Swapping to a different provider (GCP, Dropbox, etc.) only requires writing a new implementation package.
 - Multipart upload introduces complexity but is necessary for large files. The abort-on-failure pattern prevents AWS from charging for incomplete uploads indefinitely.
-- Future iterations will add a server layer on top of this client, so keeping the interface clean now reduces future refactoring cost.
+- The service layer (`aws_client_service`) is intentionally thin — it delegates all logic to the impl and never talks to AWS directly. This keeps the HTTP layer easy to test and swap out.
 
 ---
 
