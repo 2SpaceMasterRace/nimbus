@@ -10,7 +10,6 @@ authors = [
     { name = "Daniel J. Barros", email = "djb10118@nyu.edu" },
     { name = "Nicholas Maspons", email = "nem8891@nyu.edu" },
 ]
-
 requires-python = ">=3.12"
 dependencies = [
     "boto3-stubs>=1.42.54",
@@ -19,6 +18,10 @@ dependencies = [
     "httpx>=0.28.1",
     "rich>=14.3.3",
     "structlog>=25.5.0",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "starlette>=0.40.0",
+    "uvicorn[standard]>=0.30.0",
 ]
 
 [tool.uv]
@@ -52,25 +55,26 @@ dev = [
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "S101",   # Assertions are valid for precondition checks; see rubric note on testing
-    "INP001", # tests/ intentionally has no __init__.py per rubric requirements
-    "COM812", # Conflicts with ruff formatter's trailing-comma handling (ruff docs recommendation)
-    "D203",   # Incompatible with D211 (no-blank-line-before-class); ruff picks one, we suppress both warnings
-    "D213",   # Incompatible with D212 (multi-line-summary-first-line); ruff picks one, we suppress both warnings
+    "S101",
+    "INP001",
+    "COM812",
+    "D203",
+    "D213",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = ["S101"] # Justification: Same as [tool.ruff.lint]
+"**/test_*.py" = ["S101"]
 
 [tool.mypy]
 strict = true
+ignore_missing_imports = true
 mypy_path = [
     "src/aws_client_impl",
     "src/cloud_storage_client_api",
+    "src/aws_client_service",
 ]
 
 [[tool.mypy.overrides]]
-# boto3/botocore ship partial stubs via boto3-stubs; suppress any residual gaps.
 module = [
     "boto3.*",
     "botocore.*",
@@ -78,12 +82,10 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# Test files import private helpers and duck-typed fixtures not visible to mypy.
 module = ["tests.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
 testpaths = ["tests", "src/*/tests"]
 addopts = ["--cov", "--cov-report=term-missing", "--import-mode=importlib"]
 markers = [
@@ -101,9 +103,16 @@ source = ["src"]
 omit = ["*/tests/*", "*/__main__.py"]
 
 [tool.coverage.report]
-fail_under = 80 # Justification: 80% is the sweet spot to make sure the code is well-tasted and not much developer hours are poured into testing. Refer Goodhart's Law.
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/aws_client_service",
+    "src/aws_client_impl",
+    "src/cloud_storage_client_api",
 ]
