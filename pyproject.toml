@@ -22,6 +22,9 @@ dependencies = [
     "pydantic>=2.0.0",
     "starlette>=0.40.0",
     "uvicorn[standard]>=0.30.0",
+    "itsdangerous>=2.2.0",
+    "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.22",
 ]
 
 [tool.uv]
@@ -50,6 +53,8 @@ dev = [
     "myst-parser>=5.0.0",
     "sphinx-autobuild>=2024.10.3",
     "sphinx>=9.1.0",
+    "pytest-httpserver>=1.1.5",
+    "types-requests>=2.33.0.20260327",
 ]
 
 [tool.ruff.lint]
@@ -63,7 +68,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = ["S101"]
+"**/test_*.py" = ["S101", "S105"]
 
 [tool.mypy]
 strict = true
