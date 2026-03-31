@@ -21,9 +21,6 @@ import tempfile
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 
-import aws_client_impl  # noqa: F401
-
-
 import aws_client_impl  # noqa: F401  # triggers dependency injection
 
 log: Any = structlog.get_logger()
