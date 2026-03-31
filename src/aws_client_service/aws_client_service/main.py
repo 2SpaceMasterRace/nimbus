@@ -1,22 +1,41 @@
 """AWS S3 FastAPI service."""
+"""AWS S3 FastAPI service."""
 
-import tempfile
-from pathlib import Path, PurePosixPath
-from typing import Annotated, Any
-
-import structlog
-from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.factory import get_client
-from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from aws_client_service.routes.auth import router as auth_router
+from aws_client_service.deps import require_oauth_session
+from starlette.middleware.sessions import SessionMiddleware
 from starlette.background import BackgroundTask
+from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
+from cloud_storage_client_api.factory import get_client
+from cloud_storage_client_api.client import CloudStorageClient
+import structlog
+from dotenv import load_dotenv
+from typing import Annotated, Any
+from pathlib import Path, PurePosixPath
+import os
+import tempfile
+
+
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+
+
+import aws_client_impl  # noqa: F401
+
 
 import aws_client_impl  # noqa: F401  # triggers dependency injection
 
 log: Any = structlog.get_logger()
 
 app = FastAPI(title="AWS S3 Cloud Storage Service", version="0.1.0")
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ["SESSION_SECRET_KEY"],
+)
+
+app.include_router(auth_router)
 
 
 class OperationResult(BaseModel):
@@ -52,6 +71,7 @@ def upload_object(
     container: str,
     object_name: str,
     file: UploadFile,
+    _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> OperationResult:
     """Upload an object to a bucket (container).
@@ -88,9 +108,11 @@ def upload_object(
 
 
 @app.get("/download", response_class=FileResponse)
+@app.get("/download", response_class=FileResponse)
 def download_file(
     bucket_name: str,
     object_name: str,
+    _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> FileResponse:
     """Download an S3 object and return it as a file response.
@@ -151,6 +173,7 @@ def download_file(
 def delete_object(
     container: str,
     object_name: str,
+    _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> OperationResult:
     """Delete an object from a bucket (container).
@@ -211,6 +234,7 @@ def validate_prefix(prefix: str | None = Query(None)) -> str:
 @app.get("/files")
 def list_files(
     prefix: Annotated[str, Depends(validate_prefix)],
+    _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> dict[str, list[str]]:
     """List files that match a given prefix.
