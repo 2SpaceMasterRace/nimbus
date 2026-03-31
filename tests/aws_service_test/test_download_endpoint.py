@@ -7,9 +7,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
-
 from aws_client_service.main import app, get_storage_client
+from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

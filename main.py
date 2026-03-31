@@ -9,9 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
+from cloud_storage_client_api.factory import get_client
 
 import aws_client_impl  # noqa: F401  # triggers dependency injection
-from cloud_storage_client_api.factory import get_client
 
 log: Any = structlog.get_logger()
 

@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 from aws_client_impl.s3_client import S3Client
+from aws_client_service.main import app, get_storage_client
+from cloud_storage_client_api.client import CloudStorageClient
 from starlette.testclient import TestClient
 
 import aws_client_impl  # noqa: F401  — registers S3Client factory as side-effect
-from aws_client_service.main import app, get_storage_client
-from cloud_storage_client_api.client import CloudStorageClient
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture

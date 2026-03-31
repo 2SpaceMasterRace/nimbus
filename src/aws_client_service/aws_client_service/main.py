@@ -7,7 +7,7 @@ from typing import Annotated, Any
 import structlog
 from cloud_storage_client_api.client import CloudStorageClient
 from cloud_storage_client_api.factory import get_client
-from fastapi import Depends, FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
