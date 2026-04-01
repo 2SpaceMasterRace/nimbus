@@ -1,67 +1,48 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, BinaryIO, TextIO, TYPE_CHECKING, Generator
+from typing import Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
-import json
+
 from .. import types
-
-from ..types import UNSET, Unset
-
-
-
-
-
-
 
 T = TypeVar("T", bound="BodyUploadObjectFilesContainerObjectNamePost")
 
 
-
 @_attrs_define
 class BodyUploadObjectFilesContainerObjectNamePost:
-    """ 
-        Attributes:
-            file (str):
-     """
+    """
+    Attributes:
+        file (str):
+    """
 
     file: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
-
-
-
-
     def to_dict(self) -> dict[str, Any]:
         file = self.file
 
-
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
-        field_dict.update({
-            "file": file,
-        })
+        field_dict.update(
+            {
+                "file": file,
+            }
+        )
 
         return field_dict
-
 
     def to_multipart(self) -> types.RequestFiles:
         files: types.RequestFiles = []
 
         files.append(("file", (None, str(self.file).encode(), "text/plain")))
 
-
-
-
         for prop_name, prop in self.additional_properties.items():
             files.append((prop_name, (None, str(prop).encode(), "text/plain")))
 
-
-
         return files
-
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
@@ -71,7 +52,6 @@ class BodyUploadObjectFilesContainerObjectNamePost:
         body_upload_object_files_container_object_name_post = cls(
             file=file,
         )
-
 
         body_upload_object_files_container_object_name_post.additional_properties = d
         return body_upload_object_files_container_object_name_post

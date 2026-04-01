@@ -111,8 +111,25 @@ def test_service_openapi_schema_includes_download() -> None:
 
     download_op = schema["paths"]["/download"]["get"]
     param_names = [p["name"] for p in download_op["parameters"]]
-    assert "bucket_name" in param_names
+    assert "container" in param_names
     assert "object_name" in param_names
+
+
+@pytest.mark.circleci
+def test_service_openapi_schema_includes_list_container() -> None:
+    """Tests that the list endpoint requires a container query parameter."""
+    client = TestClient(app)
+
+    response = client.get("/openapi.json")
+    assert response.status_code == HTTP_OK
+
+    schema = response.json()
+    assert "/files" in schema["paths"]
+
+    list_op = schema["paths"]["/files"]["get"]
+    param_names = [p["name"] for p in list_op["parameters"]]
+    assert "container" in param_names
+    assert "prefix" in param_names
 
 
 @pytest.mark.circleci

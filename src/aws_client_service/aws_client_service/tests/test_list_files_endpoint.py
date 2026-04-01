@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
+from cloud_storage_client_api.exceptions import StorageBackendError
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -42,11 +43,14 @@ def test_list_files_returns_matching_files(
     """GET /files returns a list of matching file keys."""
     mock_storage_client.list_files.return_value = ["docs/a.txt", "docs/b.txt"]
 
-    response = client.get("/files", params={"prefix": "docs/"})
+    response = client.get(
+        "/files",
+        params={"container": "docs-bucket", "prefix": "docs/"},
+    )
 
     assert response.status_code == HTTP_OK
     assert response.json() == {"files": ["docs/a.txt", "docs/b.txt"]}
-    mock_storage_client.list_files.assert_called_once_with("docs/")
+    mock_storage_client.list_files.assert_called_once_with("docs-bucket", "docs/")
 
 
 def test_list_files_returns_empty_list(
@@ -56,16 +60,19 @@ def test_list_files_returns_empty_list(
     """GET /files returns an empty list when no files match."""
     mock_storage_client.list_files.return_value = []
 
-    response = client.get("/files", params={"prefix": "missing/"})
+    response = client.get(
+        "/files",
+        params={"container": "docs-bucket", "prefix": "missing/"},
+    )
 
     assert response.status_code == HTTP_OK
     assert response.json() == {"files": []}
-    mock_storage_client.list_files.assert_called_once_with("missing/")
+    mock_storage_client.list_files.assert_called_once_with("docs-bucket", "missing/")
 
 
-def test_list_files_requires_prefix(client: TestClient) -> None:
-    """GET /files returns 422 when prefix is missing."""
-    response = client.get("/files")
+def test_list_files_requires_container(client: TestClient) -> None:
+    """GET /files returns 422 when container is missing."""
+    response = client.get("/files", params={"prefix": "docs/"})
 
     assert response.status_code == HTTP_UNPROCESSABLE
 
@@ -75,9 +82,26 @@ def test_list_files_storage_error(
     mock_storage_client: MagicMock,
 ) -> None:
     """GET /files returns 502 when the storage backend raises an exception."""
-    mock_storage_client.list_files.side_effect = Exception("backend failure")
+    mock_storage_client.list_files.side_effect = StorageBackendError("backend failure")
 
-    response = client.get("/files", params={"prefix": "docs/"})
+    response = client.get(
+        "/files",
+        params={"container": "docs-bucket", "prefix": "docs/"},
+    )
 
     assert response.status_code == HTTP_BAD_GATEWAY
     assert response.json() == {"detail": "List files failed due to a storage error"}
+
+
+def test_list_files_defaults_prefix_to_empty(
+    client: TestClient,
+    mock_storage_client: MagicMock,
+) -> None:
+    """GET /files lists the whole container when prefix is omitted."""
+    mock_storage_client.list_files.return_value = ["a.txt", "b.txt"]
+
+    response = client.get("/files", params={"container": "docs-bucket"})
+
+    assert response.status_code == HTTP_OK
+    assert response.json() == {"files": ["a.txt", "b.txt"]}
+    mock_storage_client.list_files.assert_called_once_with("docs-bucket", "")

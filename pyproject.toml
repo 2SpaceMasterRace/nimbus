@@ -11,30 +11,21 @@ authors = [
     { name = "Nicholas Maspons", email = "nem8891@nyu.edu" },
 ]
 requires-python = ">=3.12"
-dependencies = [
-    "boto3-stubs>=1.42.54",
-    "boto3[crt]>=1.42.54",
-    "coverage>=7.13.4",
-    "httpx>=0.28.1",
-    "rich>=14.3.3",
-    "structlog>=25.5.0",
-    "fastapi>=0.115.0",
-    "pydantic>=2.0.0",
-    "starlette>=0.40.0",
-    "uvicorn[standard]>=0.30.0",
-    "itsdangerous>=2.2.0",
-    "python-dotenv>=1.2.2",
-    "python-multipart>=0.0.22",
-]
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+extend-exclude = [
+    "src/aws_s3_cloud_storage_service_client/aws_s3_cloud_storage_service_client",
+]
 
 [tool.uv.workspace]
 members = [
     "src/cloud_storage_client_api",
     "src/aws_client_impl",
     "src/aws_client_service",
+    "src/aws_client_adapter",
     "src/aws_s3_cloud_storage_service_client"
 ]
 
@@ -42,10 +33,13 @@ members = [
 cloud-storage-client-api = { workspace = true }
 aws-client-impl = { workspace = true }
 aws-client-service = { workspace = true }
+aws-client-adapter = { workspace = true }
 aws-s3-cloud-storage-service-client = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "boto3-stubs>=1.42.54",
+    "coverage>=7.13.4",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
     "pytest-cov>=6.0.0",
@@ -79,6 +73,7 @@ mypy_path = [
     "src/aws_client_impl",
     "src/cloud_storage_client_api",
     "src/aws_client_service",
+    "src/aws_client_adapter",
 ]
 
 [[tool.mypy.overrides]]
@@ -107,7 +102,11 @@ markers = [
 
 [tool.coverage.run]
 source = ["src"]
-omit = ["*/tests/*", "*/__main__.py"]
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+    "src/aws_s3_cloud_storage_service_client/aws_s3_cloud_storage_service_client/*",
+]
 
 [tool.coverage.report]
 fail_under = 80
@@ -122,4 +121,5 @@ packages = [
     "src/aws_client_service",
     "src/aws_client_impl",
     "src/cloud_storage_client_api",
+    "src/aws_client_adapter",
 ]

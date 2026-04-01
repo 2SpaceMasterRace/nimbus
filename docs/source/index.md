@@ -10,6 +10,13 @@ It aims to provide a clean, well-documented foundation for collaborative Python 
 New here? Start with the getting started guide to install the package and run your first example.
 
 - {doc}`getting-started`
+- {doc}`curl-tutorial`
+
+---
+
+## Guide
+
+- {doc}`guide/index`
 
 ---
 
@@ -36,6 +43,14 @@ New here? Start with the getting started guide to install the package and run yo
 :caption: Getting Started
 
 getting-started
+curl-tutorial
+```
+
+```{toctree}
+:hidden:
+:caption: Guide
+
+guide/index
 ```
 
 ```{toctree}

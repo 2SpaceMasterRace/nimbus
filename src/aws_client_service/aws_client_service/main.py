@@ -1,31 +1,41 @@
 """AWS S3 FastAPI service."""
-"""AWS S3 FastAPI service."""
 
-from aws_client_service.routes.auth import router as auth_router
-from aws_client_service.deps import require_oauth_session
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.background import BackgroundTask
-from pydantic import BaseModel
-from fastapi.responses import FileResponse
-from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
-from cloud_storage_client_api.factory import get_client
-from cloud_storage_client_api.client import CloudStorageClient
-import structlog
-from dotenv import load_dotenv
-from typing import Annotated, Any
-from pathlib import Path, PurePosixPath
 import os
 import tempfile
+from pathlib import Path, PurePosixPath
+from typing import Annotated, Any
 
+import structlog
+from cloud_storage_client_api.client import CloudStorageClient
+from cloud_storage_client_api.exceptions import (
+    InvalidContainerError,
+    InvalidFileObjectError,
+    InvalidObjectNameError,
+    ObjectNotFoundError,
+    StorageBackendError,
+)
+from cloud_storage_client_api.factory import get_client
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
+from fastapi import Path as ApiPath
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+from starlette.background import BackgroundTask
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.staticfiles import StaticFiles
+
+from aws_client_service.deps import require_oauth_session
+from aws_client_service.routes.auth import router as auth_router
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
 
-import aws_client_impl  # noqa: F401  # triggers dependency injection
+import aws_client_impl  # noqa: E402, F401  # triggers dependency injection after env loading
 
 log: Any = structlog.get_logger()
 
 app = FastAPI(title="AWS S3 Cloud Storage Service", version="0.1.0")
+SPHINX_HTML_DIR = Path(__file__).resolve().parents[3] / "docs" / "build" / "html"
 
 app.add_middleware(
     SessionMiddleware,
@@ -34,11 +44,24 @@ app.add_middleware(
 
 app.include_router(auth_router)
 
+if SPHINX_HTML_DIR.exists():
+    app.mount(
+        "/guide",
+        StaticFiles(directory=SPHINX_HTML_DIR, html=True),
+        name="sphinx-guide",
+    )
+
 
 class OperationResult(BaseModel):
     """JSON response model for operations that return a boolean result."""
 
     ok: bool
+
+
+class ListFilesResponse(BaseModel):
+    """JSON response model for listing files within a container."""
+
+    files: list[str]
 
 
 def get_storage_client() -> CloudStorageClient:
@@ -65,8 +88,8 @@ async def root() -> dict[str, str]:
 
 @app.post("/files/{container}/{object_name:path}")
 def upload_object(
-    container: str,
-    object_name: str,
+    container: Annotated[str, ApiPath(min_length=3, max_length=63)],
+    object_name: Annotated[str, ApiPath(min_length=1, max_length=1024)],
     file: UploadFile,
     _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
@@ -88,10 +111,14 @@ def upload_object(
 
     """
     try:
-        client.upload_obj(file.file, object_name)
-    except ValueError as exc:
+        client.upload_obj(container, file.file, object_name)
+    except (
+        InvalidContainerError,
+        InvalidFileObjectError,
+        InvalidObjectNameError,
+    ) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
+    except StorageBackendError as exc:
         log.exception(
             "Upload failed",
             container=container,
@@ -105,17 +132,16 @@ def upload_object(
 
 
 @app.get("/download", response_class=FileResponse)
-@app.get("/download", response_class=FileResponse)
 def download_file(
-    bucket_name: str,
-    object_name: str,
+    container: Annotated[str, Query(min_length=3, max_length=63)],
+    object_name: Annotated[str, Query(min_length=1, max_length=1024)],
     _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> FileResponse:
     """Download an S3 object and return it as a file response.
 
     Args:
-        bucket_name: The name of the bucket to download from.
+        container: The name of the bucket to download from.
         object_name: The name of the key to download from.
         client: Injected cloud storage client.
 
@@ -123,7 +149,9 @@ def download_file(
         A streaming file response containing the downloaded object.
 
     Raises:
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 404 if the download fails.
+        HTTPException: 502 if the storage backend raises an unexpected error.
 
     """
     suffix = PurePosixPath(object_name).suffix or ".bin"
@@ -136,15 +164,21 @@ def download_file(
 
     try:
         success = client.download_file(
-            bucket_name,
+            container,
             object_name,
             tmp_path,
         )
-    except Exception as exc:
+    except (InvalidContainerError, InvalidObjectNameError) as exc:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ObjectNotFoundError as exc:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except StorageBackendError as exc:
         Path(tmp_path).unlink(missing_ok=True)
         log.exception(
             "Download failed",
-            bucket_name=bucket_name,
+            container=container,
             object_name=object_name,
         )
         raise HTTPException(
@@ -152,12 +186,11 @@ def download_file(
             detail="Download failed due to a storage error",
         ) from exc
 
-    if not success:
-        Path(tmp_path).unlink(missing_ok=True)
+    if not success:  # pragma: no cover
+        Path(tmp_path).unlink(missing_ok=True)  # pragma: no cover
         raise HTTPException(
-            status_code=404,
-            detail="Object not found or download failed",
-        )
+            status_code=404, detail="Download failed"
+        )  # pragma: no cover
 
     return FileResponse(
         path=tmp_path,
@@ -168,8 +201,8 @@ def download_file(
 
 @app.delete("/files/{container}/{object_name:path}")
 def delete_object(
-    container: str,
-    object_name: str,
+    container: Annotated[str, ApiPath(min_length=3, max_length=63)],
+    object_name: Annotated[str, ApiPath(min_length=1, max_length=1024)],
     _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> OperationResult:
@@ -184,13 +217,18 @@ def delete_object(
         OperationResult with ok=True on success.
 
     Raises:
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 502 if the storage backend raises an exception.
-        HTTPException: 404 if the deletion returns failure.
+        HTTPException: 404 if the object does not exist.
 
     """
     try:
         ok = client.delete_file(container, object_name)
-    except Exception as exc:
+    except (InvalidContainerError, InvalidObjectNameError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ObjectNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except StorageBackendError as exc:
         log.exception(
             "Delete failed",
             container=container,
@@ -201,42 +239,23 @@ def delete_object(
             detail="Delete failed due to a storage error",
         ) from exc
 
-    if not ok:
-        raise HTTPException(
-            status_code=404,
-            detail="Object not found or delete failed",
-        )
+    if not ok:  # pragma: no cover
+        raise HTTPException(status_code=404, detail="Delete failed")  # pragma: no cover
 
     return OperationResult(ok=True)
 
 
-def validate_prefix(prefix: str | None = Query(None)) -> str:
-    """Validate that a prefix query parameter is provided.
-
-    Args:
-        prefix: Optional prefix from the query string.
-
-    Returns:
-        The validated prefix string.
-
-    Raises:
-        HTTPException: If prefix is not provided.
-
-    """
-    if prefix is None:
-        raise HTTPException(status_code=422, detail="prefix is required")
-    return prefix
-
-
 @app.get("/files")
 def list_files(
-    prefix: Annotated[str, Depends(validate_prefix)],
+    container: Annotated[str, Query(min_length=3, max_length=63)],
     _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
-) -> dict[str, list[str]]:
+    prefix: Annotated[str, Query(max_length=1024)] = "",
+) -> ListFilesResponse:
     """List files that match a given prefix.
 
     Args:
+        container: Container used to scope the listing operation.
         prefix: Prefix used to filter objects.
         client: Injected cloud storage client.
 
@@ -244,16 +263,19 @@ def list_files(
         A JSON object containing matching file keys.
 
     Raises:
-        HTTPException: If the storage backend fails.
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 502 if the storage backend fails.
 
     """
     try:
-        files = client.list_files(prefix)
-    except Exception as exc:
-        log.exception("List files failed", prefix=prefix)
+        files = client.list_files(container, prefix)
+    except InvalidContainerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except StorageBackendError as exc:
+        log.exception("List files failed", container=container, prefix=prefix)
         raise HTTPException(
             status_code=502,
             detail="List files failed due to a storage error",
         ) from exc
 
-    return {"files": files}
+    return ListFilesResponse(files=files)

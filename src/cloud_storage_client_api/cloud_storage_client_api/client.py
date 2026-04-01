@@ -21,10 +21,16 @@ class CloudStorageClient(ABC):
     """
 
     @abstractmethod
-    def upload_file(self, local_path: str, remote_path: str) -> bool:
+    def upload_file(
+        self,
+        container: str,
+        local_path: str,
+        remote_path: str,
+    ) -> bool:
         """Upload a file to cloud storage.
 
         Args:
+            container: Name of the container / bucket to upload to.
             local_path: Path to the local file.
             remote_path: The destination object key / path within the bucket.
 
@@ -32,17 +38,25 @@ class CloudStorageClient(ABC):
             True if the upload was successful.
 
         Raises:
-            ValueError: If remote_path is empty or otherwise invalid.
+            InvalidContainerError: If container is empty or otherwise invalid.
+            InvalidObjectNameError: If remote_path is empty or otherwise invalid.
             FileNotFoundError: If local_path does not exist.
+            StorageBackendError: If the backing storage provider fails.
 
         """
         raise NotImplementedError
 
     @abstractmethod
-    def upload_obj(self, file_obj: BinaryIO, remote_path: str) -> bool:
+    def upload_obj(
+        self,
+        container: str,
+        file_obj: BinaryIO,
+        remote_path: str,
+    ) -> bool:
         """Upload a binary file-like object to cloud storage.
 
         Args:
+            container: Name of the container / bucket to upload to.
             file_obj: A file-like object opened in binary mode.
             remote_path: Destination object key / path within the bucket.
 
@@ -50,7 +64,10 @@ class CloudStorageClient(ABC):
             True if the upload was successful.
 
         Raises:
-            ValueError: If remote_path is empty or file_obj is invalid.
+            InvalidContainerError: If container is empty or otherwise invalid.
+            InvalidObjectNameError: If remote_path is empty or otherwise invalid.
+            InvalidFileObjectError: If file_obj is invalid.
+            StorageBackendError: If the backing storage provider fails.
 
         """
         raise NotImplementedError
@@ -70,20 +87,31 @@ class CloudStorageClient(ABC):
             file_name: Local filesystem path to write the downloaded file to.
 
         Returns:
-            True if the download was successful, False otherwise.
+            True if the download was successful.
+
+        Raises:
+            InvalidContainerError: If container is empty or otherwise invalid.
+            InvalidObjectNameError: If object_name is empty or otherwise invalid.
+            ObjectNotFoundError: If the requested object does not exist.
+            StorageBackendError: If the backing storage provider fails.
 
         """
         raise NotImplementedError
 
     @abstractmethod
-    def list_files(self, prefix: str = "") -> list[str]:
+    def list_files(self, container: str, prefix: str = "") -> list[str]:
         """List files in cloud storage.
 
         Args:
+            container: Name of the container / bucket to list from.
             prefix: Optional prefix to filter results. Defaults to "" (all files).
 
         Returns:
             A list of object keys / paths matching the prefix.
+
+        Raises:
+            InvalidContainerError: If container is empty or otherwise invalid.
+            StorageBackendError: If the backing storage provider fails.
 
         """
         raise NotImplementedError
@@ -101,7 +129,13 @@ class CloudStorageClient(ABC):
             object_name: Key of the object to delete.
 
         Returns:
-            True if the deletion was successful, False otherwise.
+            True if the deletion was successful.
+
+        Raises:
+            InvalidContainerError: If container is empty or otherwise invalid.
+            InvalidObjectNameError: If object_name is empty or otherwise invalid.
+            ObjectNotFoundError: If the requested object does not exist.
+            StorageBackendError: If the backing storage provider fails.
 
         """
         raise NotImplementedError

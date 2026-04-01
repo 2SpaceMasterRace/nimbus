@@ -1,13 +1,14 @@
 """OAuth routes for GitHub login flow."""
 
-from fastapi import APIRouter, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse
+from typing import Annotated
 
 from aws_client_impl.oauth import (
     build_github_auth_url,
     exchange_code_for_token,
     validate_state,
 )
+from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi.responses import RedirectResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,8 +32,8 @@ def login(request: Request) -> RedirectResponse:
 @router.get("/callback")
 def callback(
     request: Request,
-    code: str = Query(...),
-    state: str = Query(...),
+    code: Annotated[str, Query(...)],
+    state: Annotated[str, Query(...)],
 ) -> dict[str, str]:
     """Handle GitHub OAuth callback.
 

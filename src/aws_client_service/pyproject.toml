@@ -5,11 +5,15 @@ description = "FastAPI service for AWS S3 cloud storage client"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    "itsdangerous>=2.2.0",
+    "pydantic>=2.11.7",
     "uvicorn>=0.34.0",
     "cloud-storage-client-api",
     "aws-client-impl",
-    "structlog>=25.5.0",
+    "python-dotenv>=1.2.2",
     "python-multipart>=0.0.22",
+    "starlette>=0.40.0",
+    "structlog>=25.5.0",
 ]
 
 [build-system]

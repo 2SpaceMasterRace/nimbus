@@ -1,48 +1,53 @@
 # aws_client_impl
 
-This package is the AWS S3 concrete implementation of the `cloud_storage_client_api` interface. It uses boto3 to interact with S3.
+AWS S3 implementation of `cloud_storage_client_api`.
 
 ## Role
 
-This fulfills the contract defined by `cloud_storage_client_api` using AWS S3. Importing this package automatically registers it using Dependency Injection
+This package is the concrete adapter around `boto3`. Importing it registers the
+local S3-backed implementation with the abstract factory.
 
 ## API
 
-- `S3Client(bucket_name, region="us-east-1")` concrete class implementing all `CloudStorageClient` methods for AWS S3
+`S3Client(region_name="us-east-1")` implements the `CloudStorageClient`
+contract using explicit container/bucket arguments per call:
 
-Implements all methods from `CloudStorageClient`:
+- `upload_file(container, local_path, remote_path)`
+- `upload_obj(container, file_obj, remote_path)`
+- `download_file(container, object_name, file_name)`
+- `list_files(container, prefix="")`
+- `delete_file(container, object_name)`
 
-- `upload_file(local_path, key)` uploads a file to S3
-- `upload_obj(file_obj, key)` uploads a binary file-like object to S3
-- `download_file(bucket_name, object_name, file_name)` downloads an S3 object to a file
-- `download_fileobj(bucket_name, object_name, file_name, file_object)` downloads an S3 object to a file-like object
-- `list_files(prefix)` lists files in the configured S3 bucket
-- `delete_file(bucket_name, object_name)` deletes a file from S3
-- `create_bucket(bucket_name, region_name)` creates an S3 bucket
-- `delete_bucket(bucket_name)` deletes an S3 bucket
+It also exposes S3-specific helpers not present on the abstract interface:
+
+- `create_bucket(bucket_name, region_name=None)`
+- `delete_bucket(bucket_name)`
+- multipart helpers for large uploads
 
 ## Dependencies
 
-- `boto3` AWS SDK for Python
-- `cloud_storage_client_api` the interface this package implements
+- `boto3`
+- `cloud-storage-client-api`
 
 ## Configuration
 
-The following environment variables are required:
+The implementation reads AWS credentials and region from environment variables:
+
+```shell
+export AWS_ACCESS_KEY_ID="..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
 ```
-AWS_ACCESS_KEY_ID=your_access_key
-AWS_SECRET_ACCESS_KEY=your_secret_key
-AWS_REGION=us-east-1
-AWS_BUCKET_NAME=your_bucket_name
-```
+
+`AWS_BUCKET_NAME` is no longer required by the implementation itself. It is
+only used by the repository's `main.py` demo entry point.
 
 ## Usage
 
-Import this package to inject it, then use the interface:
 ```python
-import aws_client_impl  # registers itself using DI
-from cloud_storage_client_api import get_client
+import aws_client_impl
+from cloud_storage_client_api.factory import get_client
 
 client = get_client()
-client.upload_file("local/path.txt", "remote/path.txt")
+client.upload_file("my-bucket", "local/report.csv", "reports/report.csv")
 ```

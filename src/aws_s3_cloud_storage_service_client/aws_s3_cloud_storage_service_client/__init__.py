@@ -1,5 +1,5 @@
+"""A client library for accessing AWS S3 Cloud Storage Service"""
 
-""" A client library for accessing AWS S3 Cloud Storage Service """
 from .client import AuthenticatedClient, Client
 
 __all__ = (

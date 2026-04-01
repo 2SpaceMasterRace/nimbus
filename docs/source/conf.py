@@ -14,7 +14,7 @@ author = "Hari Varsha V, Ajay Temal, Aarav Agrawal, Daniel J. Barros, Nicholas M
 
 # -- General configuration ---------------------------------------------------
 
-extensions = ["myst_parser"]
+extensions = ["myst_parser", "sphinx.ext.autodoc"]
 
 myst_enable_extensions = [
     "colon_fence",

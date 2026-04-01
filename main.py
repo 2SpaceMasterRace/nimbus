@@ -6,6 +6,7 @@ listing files in a bucket, and printing the results.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import structlog
@@ -19,10 +20,11 @@ log: Any = structlog.get_logger()
 def main() -> None:
     """Create a cloud storage client and demonstrate S3 operations."""
     client = get_client()
+    container = os.environ["AWS_BUCKET_NAME"]
     log.info("Created cloud storage client")
 
-    files = client.list_files("")
-    log.info("Listed files in bucket", count=len(files))
+    files = client.list_files(container, "")
+    log.info("Listed files in bucket", container=container, count=len(files))
     for key in files[:10]:
         log.info("Found file", key=key)
 

@@ -37,9 +37,19 @@ import aws_client_impl                              # registers S3 via dependenc
 from cloud_storage_client_api.factory import get_client
 
 client = get_client()                              # returns S3Client, typed as CloudStorageClient
-files  = client.list_files("")                     # list all objects in your bucket
-client.upload_file("local/data.csv", "data.csv")  # upload a file
+files  = client.list_files("my-bucket", "")        # list all objects in your bucket
+client.upload_file("my-bucket", "local/data.csv", "data.csv")
 client.download_file("my-bucket", "data.csv", "local/copy.csv")  # download it back
+```
+
+Or use the remote service without changing the calling code:
+
+```python
+import aws_client_adapter
+from cloud_storage_client_api.factory import get_client
+
+client = get_client()
+files = client.list_files("my-bucket", "reports/")
 ```
 
 Or run the bundled example:
@@ -53,30 +63,48 @@ $ uv run python main.py
 Start the FastAPI server:
 
 ```console
+$ export API_KEY="replace-me"
 $ uv run uvicorn aws_client_service.main:app --reload
 ```
+
+Protected file endpoints accept either a GitHub OAuth session or an API key in the `X-API-Key` header.
 
 Upload a file via HTTP:
 
 ```console
 $ curl -X POST "http://localhost:8000/files/my-bucket/data.csv" \
+    -H "X-API-Key: $API_KEY" \
     -F "file=@/path/to/local/data.csv"
 ```
 
 Download a file via HTTP:
 
 ```console
-$ curl "http://localhost:8000/download?bucket_name=my-bucket&object_name=data.csv" \
+$ curl "http://localhost:8000/download?container=my-bucket&object_name=data.csv" \
+    -H "X-API-Key: $API_KEY" \
     --output data.csv
 ```
 
 Delete an object via HTTP:
 
 ```console
-$ curl -X DELETE "http://localhost:8000/files/my-bucket/data.csv"
+$ curl -X DELETE \
+    -H "X-API-Key: $API_KEY" \
+    "http://localhost:8000/files/my-bucket/data.csv"
 ```
 
+List files in a container:
+
+```console
+$ curl -H "X-API-Key: $API_KEY" \
+    "http://localhost:8000/files?container=my-bucket&prefix=reports/"
+```
+
+The built Sphinx guide is also available from the running app at `/guide/`.
+
 See {doc}`api` for the full endpoint reference.
+
+For a step-by-step walkthrough with a dummy file and exact curl commands, see {doc}`curl-tutorial`.
 
 ## Next Steps
 

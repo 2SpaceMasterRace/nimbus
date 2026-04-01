@@ -7,8 +7,8 @@ system as a side-effect. Application code should do:
     from cloud_storage_client_api.factory import get_client
     client = get_client()                                 # returns S3Client
 
-The factory function (``get_client_impl``) reads AWS_BUCKET_NAME and
-AWS_REGION from environment variables so credentials are never hardcoded.
+The factory function (``get_client_impl``) reads AWS_REGION from environment
+variables so credentials are never hardcoded.
 """
 
 from cloud_storage_client_api.factory import register_client

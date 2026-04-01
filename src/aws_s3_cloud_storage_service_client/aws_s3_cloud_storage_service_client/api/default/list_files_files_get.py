@@ -1,41 +1,36 @@
 from http import HTTPStatus
-from typing import Any, cast
-from urllib.parse import quote
+from typing import Any
 
 import httpx
 
-from ...client import AuthenticatedClient, Client
-from ...types import Response, UNSET
 from ... import errors
-
+from ...client import AuthenticatedClient, Client
 from ...models.http_validation_error import HTTPValidationError
-from ...models.list_files_files_get_response_list_files_files_get import ListFilesFilesGetResponseListFilesFilesGet
-from ...types import UNSET, Unset
-from typing import cast
-
+from ...models.list_files_response import ListFilesResponse
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
-    prefix: None | str | Unset = UNSET,
-
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
 ) -> dict[str, Any]:
-    
+    headers: dict[str, Any] = {}
+    if not isinstance(x_api_key, Unset):
+        headers["X-API-Key"] = x_api_key
 
-    
+    if not isinstance(authorization, Unset):
+        headers["authorization"] = authorization
 
     params: dict[str, Any] = {}
 
-    json_prefix: None | str | Unset
-    if isinstance(prefix, Unset):
-        json_prefix = UNSET
-    else:
-        json_prefix = prefix
-    params["prefix"] = json_prefix
+    params["container"] = container
 
+    params["prefix"] = prefix
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -43,23 +38,20 @@ def _get_kwargs(
         "params": params,
     }
 
-
+    _kwargs["headers"] = headers
     return _kwargs
 
 
-
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet | None:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> HTTPValidationError | ListFilesResponse | None:
     if response.status_code == 200:
-        response_200 = ListFilesFilesGetResponseListFilesFilesGet.from_dict(response.json())
-
-
+        response_200 = ListFilesResponse.from_dict(response.json())
 
         return response_200
 
     if response.status_code == 422:
         response_422 = HTTPValidationError.from_dict(response.json())
-
-
 
         return response_422
 
@@ -69,7 +61,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[HTTPValidationError | ListFilesResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -81,14 +75,17 @@ def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Res
 def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
-    prefix: None | str | Unset = UNSET,
-
-) -> Response[HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet]:
-    """ List Files
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> Response[HTTPValidationError | ListFilesResponse]:
+    """List Files
 
      List files that match a given prefix.
 
     Args:
+        container: Container used to scope the listing operation.
         prefix: Prefix used to filter objects.
         client: Injected cloud storage client.
 
@@ -96,23 +93,28 @@ def sync_detailed(
         A JSON object containing matching file keys.
 
     Raises:
-        HTTPException: If the storage backend fails.
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
-        prefix (None | str | Unset):
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet]
-     """
-
+        Response[HTTPValidationError | ListFilesResponse]
+    """
 
     kwargs = _get_kwargs(
+        container=container,
         prefix=prefix,
-
+        x_api_key=x_api_key,
+        authorization=authorization,
     )
 
     response = client.get_httpx_client().request(
@@ -121,17 +123,21 @@ def sync_detailed(
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     *,
     client: AuthenticatedClient | Client,
-    prefix: None | str | Unset = UNSET,
-
-) -> HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet | None:
-    """ List Files
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> HTTPValidationError | ListFilesResponse | None:
+    """List Files
 
      List files that match a given prefix.
 
     Args:
+        container: Container used to scope the listing operation.
         prefix: Prefix used to filter objects.
         client: Injected cloud storage client.
 
@@ -139,37 +145,46 @@ def sync(
         A JSON object containing matching file keys.
 
     Raises:
-        HTTPException: If the storage backend fails.
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
-        prefix (None | str | Unset):
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet
-     """
-
+        HTTPValidationError | ListFilesResponse
+    """
 
     return sync_detailed(
         client=client,
-prefix=prefix,
-
+        container=container,
+        prefix=prefix,
+        x_api_key=x_api_key,
+        authorization=authorization,
     ).parsed
+
 
 async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
-    prefix: None | str | Unset = UNSET,
-
-) -> Response[HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet]:
-    """ List Files
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> Response[HTTPValidationError | ListFilesResponse]:
+    """List Files
 
      List files that match a given prefix.
 
     Args:
+        container: Container used to scope the listing operation.
         prefix: Prefix used to filter objects.
         client: Injected cloud storage client.
 
@@ -177,42 +192,49 @@ async def asyncio_detailed(
         A JSON object containing matching file keys.
 
     Raises:
-        HTTPException: If the storage backend fails.
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
-        prefix (None | str | Unset):
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet]
-     """
-
+        Response[HTTPValidationError | ListFilesResponse]
+    """
 
     kwargs = _get_kwargs(
+        container=container,
         prefix=prefix,
-
+        x_api_key=x_api_key,
+        authorization=authorization,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     *,
     client: AuthenticatedClient | Client,
-    prefix: None | str | Unset = UNSET,
-
-) -> HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet | None:
-    """ List Files
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> HTTPValidationError | ListFilesResponse | None:
+    """List Files
 
      List files that match a given prefix.
 
     Args:
+        container: Container used to scope the listing operation.
         prefix: Prefix used to filter objects.
         client: Injected cloud storage client.
 
@@ -220,22 +242,29 @@ async def asyncio(
         A JSON object containing matching file keys.
 
     Raises:
-        HTTPException: If the storage backend fails.
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
-        prefix (None | str | Unset):
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        HTTPValidationError | ListFilesFilesGetResponseListFilesFilesGet
-     """
+        HTTPValidationError | ListFilesResponse
+    """
 
-
-    return (await asyncio_detailed(
-        client=client,
-prefix=prefix,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            client=client,
+            container=container,
+            prefix=prefix,
+            x_api_key=x_api_key,
+            authorization=authorization,
+        )
+    ).parsed

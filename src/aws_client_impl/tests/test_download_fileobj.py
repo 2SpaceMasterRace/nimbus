@@ -32,7 +32,7 @@ def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
         "_s3_resource",
         new_callable=lambda: property(lambda _: fake_resource),
     )
-    return S3Client(bucket_name="ignored")
+    return S3Client()
 
 
 def test_download_fileobj_returns_true_on_success(

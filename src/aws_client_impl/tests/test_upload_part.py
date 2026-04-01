@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
+from cloud_storage_client_api.exceptions import StorageBackendError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -25,7 +26,7 @@ def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
     fake_session.client.return_value = fake_boto_client
     fake_session.region_name = "us-east-1"
     mocker.patch.object(S3Client, "_get_session", return_value=fake_session)
-    return S3Client(bucket_name="my-bucket")
+    return S3Client()
 
 
 def test_upload_part_raises_value_error_on_empty_key(mocker: "MockerFixture") -> None:
@@ -33,7 +34,9 @@ def test_upload_part_raises_value_error_on_empty_key(mocker: "MockerFixture") ->
     c = _make_client(mocker, mocker.Mock())
 
     with pytest.raises(ValueError, match="Key cannot be empty"):
-        c.upload_part(key="", upload_id="u", part_number=1, body=b"x")
+        c.upload_part(
+            container="my-bucket", key="", upload_id="u", part_number=1, body=b"x"
+        )
 
 
 def test_upload_part_raises_value_error_on_leading_slash(
@@ -43,7 +46,9 @@ def test_upload_part_raises_value_error_on_leading_slash(
     c = _make_client(mocker, mocker.Mock())
 
     with pytest.raises(ValueError, match="leading slash"):
-        c.upload_part(key="/bad", upload_id="u", part_number=1, body=b"x")
+        c.upload_part(
+            container="my-bucket", key="/bad", upload_id="u", part_number=1, body=b"x"
+        )
 
 
 def test_upload_part_raises_value_error_on_invalid_part_number(
@@ -53,10 +58,14 @@ def test_upload_part_raises_value_error_on_invalid_part_number(
     c = _make_client(mocker, mocker.Mock())
 
     with pytest.raises(ValueError, match="part_number"):
-        c.upload_part(key="k", upload_id="u", part_number=0, body=b"x")
+        c.upload_part(
+            container="my-bucket", key="k", upload_id="u", part_number=0, body=b"x"
+        )
 
     with pytest.raises(ValueError, match="part_number"):
-        c.upload_part(key="k", upload_id="u", part_number=10001, body=b"x")
+        c.upload_part(
+            container="my-bucket", key="k", upload_id="u", part_number=10001, body=b"x"
+        )
 
 
 def test_upload_part_returns_response_on_success(mocker: "MockerFixture") -> None:
@@ -65,7 +74,13 @@ def test_upload_part_returns_response_on_success(mocker: "MockerFixture") -> Non
     fake_boto_client.upload_part.return_value = {"ETag": "e1"}
     c = _make_client(mocker, fake_boto_client)
 
-    resp = c.upload_part(key="k", upload_id="u", part_number=1, body=b"abc")
+    resp = c.upload_part(
+        container="my-bucket",
+        key="k",
+        upload_id="u",
+        part_number=1,
+        body=b"abc",
+    )
 
     assert resp == {"ETag": "e1"}
     fake_boto_client.upload_part.assert_called_once_with(
@@ -83,7 +98,13 @@ def test_upload_part_raises_client_error_on_failure(mocker: "MockerFixture") -> 
     fake_boto_client.upload_part.side_effect = _client_error()
     c = _make_client(mocker, fake_boto_client)
 
-    with pytest.raises(ClientError):
-        c.upload_part(key="k", upload_id="u", part_number=1, body=io.BytesIO(b"abc"))
+    with pytest.raises(StorageBackendError):
+        c.upload_part(
+            container="my-bucket",
+            key="k",
+            upload_id="u",
+            part_number=1,
+            body=io.BytesIO(b"abc"),
+        )
 
     fake_boto_client.upload_part.assert_called_once()

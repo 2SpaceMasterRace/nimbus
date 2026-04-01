@@ -5,7 +5,10 @@ description = "AWS S3 implementation of the cloud storage client"
 requires-python = ">=3.12"
 dependencies = [
     "boto3>=1.42.54",
+    "botocore>=1.42.54",
     "cloud-storage-client-api",
+    "requests>=2.32.5",
+    "structlog>=25.5.0",
 ]
 
 [build-system]

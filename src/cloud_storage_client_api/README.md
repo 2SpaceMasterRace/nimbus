@@ -1,29 +1,41 @@
 # cloud_storage_client_api
 
-Abstract base class (ABC) defining the contract for a cloud storage client
+Provider-agnostic abstract contract and domain exceptions for cloud storage.
 
 ## Role
 
-This package provides the interface that all cloud storage implementations must follow . It contains no concrete logic, only abstract method signatures. Any implementation (AWS, GCP, Dropbox, etc.) must inherit from this.
+This package defines the public interface that every implementation must honor.
+It contains no FastAPI, boto3, HTTP, or provider-specific types.
 
 ## API
 
-`CloudStorageClient` — abstract base class with the following methods:
+`CloudStorageClient` exposes container-scoped object operations:
 
-- `upload_file(local_path, remote_path)` — upload a file to cloud storage
-- `download_file(remote_path, local_path)` — download a file from cloud storage
-- `list_files(prefix)` — list files in storage, optionally filtered by prefix
-- `delete_file(remote_path)` — delete a file from cloud storage
+- `upload_file(container, local_path, remote_path)`
+- `upload_obj(container, file_obj, remote_path)`
+- `download_file(container, object_name, file_name)`
+- `list_files(container, prefix="")`
+- `delete_file(container, object_name)`
+
+The package also exports typed domain exceptions:
+
+- `InvalidContainerError`
+- `InvalidObjectNameError`
+- `InvalidFileObjectError`
+- `ObjectNotFoundError`
+- `StorageBackendError`
 
 ## Dependencies
 
-None. This package is intentionally dependency free to keep the interface clean and portable.
+None. This package is intentionally framework-free and implementation-free.
 
 ## Usage
-```python
-from cloud_storage_client_api import CloudStorageClient
 
-client: CloudStorageClient = get_client()
+```python
+from cloud_storage_client_api.factory import get_client
+
+client = get_client()
+files = client.list_files("my-bucket", "reports/")
 ```
 
-Code against this interface, not the implementation directly.
+Callers should depend on this package, not on a concrete implementation.

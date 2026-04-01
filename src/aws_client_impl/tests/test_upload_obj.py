@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
+from cloud_storage_client_api.exceptions import StorageBackendError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -23,20 +24,20 @@ def test_upload_obj_raises_value_error_on_empty_key(
     mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test upload_obj raises ValueError when key is empty."""
-    c = S3Client(bucket_name="my-bucket")
+    c = S3Client()
 
     with pytest.raises(ValueError, match="Key cannot be empty"):
-        c.upload_obj(file_obj=io.BytesIO(b"abc"), key="")
+        c.upload_obj(container="my-bucket", file_obj=io.BytesIO(b"abc"), key="")
 
 
 def test_upload_obj_raises_value_error_on_leading_slash(
     mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
     """Test upload_obj raises ValueError when key starts with '/'."""
-    c = S3Client(bucket_name="my-bucket")
+    c = S3Client()
 
     with pytest.raises(ValueError, match="leading slash"):
-        c.upload_obj(file_obj=io.BytesIO(b"abc"), key="/bad")
+        c.upload_obj(container="my-bucket", file_obj=io.BytesIO(b"abc"), key="/bad")
 
 
 def test_upload_obj_calls_singlepart_upload_when_small(
@@ -51,9 +52,9 @@ def test_upload_obj_calls_singlepart_upload_when_small(
     # force threshold big so BytesIO is treated as small
     mocker.patch("aws_client_impl.s3_client.MULTIPART_THRESHOLD", 10_000_000)
 
-    c = S3Client(bucket_name="my-bucket")
+    c = S3Client()
     buf = io.BytesIO(b"hello")
-    ok = c.upload_obj(file_obj=buf, key="k")
+    ok = c.upload_obj(container="my-bucket", file_obj=buf, key="k")
 
     assert ok is True
     fake_client.upload_fileobj.assert_called_once()
@@ -81,10 +82,10 @@ def test_upload_obj_calls_multipart_when_unseekable(
         def seekable(self) -> bool:
             return False
 
-    c = S3Client(bucket_name="my-bucket")
+    c = S3Client()
     mp = mocker.patch.object(c, "_multipart_upload_obj", return_value=True)
 
-    ok = c.upload_obj(file_obj=Unseekable(), key="k")  # type: ignore[arg-type]  # intentionally passing a duck-typed stub that doesn't satisfy BinaryIO formally, to exercise the unseekable upload path
+    ok = c.upload_obj(container="my-bucket", file_obj=Unseekable(), key="k")  # type: ignore[arg-type]  # intentionally passing a duck-typed stub that doesn't satisfy BinaryIO formally, to exercise the unseekable upload path
 
     assert ok is True
     mp.assert_called_once()
@@ -103,10 +104,10 @@ def test_upload_obj_raises_client_error_on_upload_failure(
 
     mocker.patch("aws_client_impl.s3_client.MULTIPART_THRESHOLD", 10_000_000)
 
-    c = S3Client(bucket_name="my-bucket")
+    c = S3Client()
     buf = io.BytesIO(b"hello")
 
-    with pytest.raises(ClientError):
-        c.upload_obj(file_obj=buf, key="k")
+    with pytest.raises(StorageBackendError):
+        c.upload_obj(container="my-bucket", file_obj=buf, key="k")
 
     fake_client.upload_fileobj.assert_called_once()

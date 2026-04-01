@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
+from cloud_storage_client_api.exceptions import StorageBackendError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -24,7 +25,7 @@ def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
     fake_session.client.return_value = fake_boto_client
     fake_session.region_name = "us-east-1"
     mocker.patch.object(S3Client, "_get_session", return_value=fake_session)
-    return S3Client(bucket_name="my-bucket")
+    return S3Client()
 
 
 def test_create_multipart_upload_raises_value_error_on_empty_key(
@@ -34,7 +35,7 @@ def test_create_multipart_upload_raises_value_error_on_empty_key(
     c = _make_client(mocker, mocker.Mock())
 
     with pytest.raises(ValueError, match="Key cannot be empty"):
-        c.create_multipart_upload(key="")
+        c.create_multipart_upload(container="my-bucket", key="")
 
 
 def test_create_multipart_upload_raises_value_error_on_leading_slash(
@@ -44,7 +45,7 @@ def test_create_multipart_upload_raises_value_error_on_leading_slash(
     c = _make_client(mocker, mocker.Mock())
 
     with pytest.raises(ValueError, match="leading slash"):
-        c.create_multipart_upload(key="/bad")
+        c.create_multipart_upload(container="my-bucket", key="/bad")
 
 
 def test_create_multipart_upload_returns_response_on_success(
@@ -55,7 +56,7 @@ def test_create_multipart_upload_returns_response_on_success(
     fake_boto_client.create_multipart_upload.return_value = {"UploadId": "u1"}
     c = _make_client(mocker, fake_boto_client)
 
-    resp = c.create_multipart_upload(key="k")
+    resp = c.create_multipart_upload(container="my-bucket", key="k")
 
     assert resp == {"UploadId": "u1"}
     fake_boto_client.create_multipart_upload.assert_called_once_with(
@@ -72,7 +73,7 @@ def test_create_multipart_upload_raises_client_error_on_failure(
     fake_boto_client.create_multipart_upload.side_effect = _client_error()
     c = _make_client(mocker, fake_boto_client)
 
-    with pytest.raises(ClientError):
-        c.create_multipart_upload(key="k")
+    with pytest.raises(StorageBackendError):
+        c.create_multipart_upload(container="my-bucket", key="k")
 
     fake_boto_client.create_multipart_upload.assert_called_once()

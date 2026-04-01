@@ -10,6 +10,13 @@ import boto3
 import structlog
 from botocore.exceptions import ClientError
 from cloud_storage_client_api.client import CloudStorageClient
+from cloud_storage_client_api.exceptions import (
+    InvalidContainerError,
+    InvalidFileObjectError,
+    InvalidObjectNameError,
+    ObjectNotFoundError,
+    StorageBackendError,
+)
 
 # Constants
 MULTIPART_THRESHOLD = 100 * 1024 * 1024
@@ -26,19 +33,17 @@ class S3Client(CloudStorageClient):
     with respect to AWS credentials and network access.
     """
 
-    def __init__(self, bucket_name: str, region_name: str = "us-east-1") -> None:
-        """Initialize S3Client with bucket name and region.
+    def __init__(self, region_name: str = "us-east-1") -> None:
+        """Initialize S3Client with the AWS region.
 
         No network calls are made here. The boto3 session and S3 client are
         created lazily on first use, so constructing an instance does not
         require AWS credentials to be present.
 
         Args:
-            bucket_name: Name of the S3 bucket to operate on.
             region_name: AWS region name. Defaults to 'us-east-1'.
 
         """
-        self._bucket_name = bucket_name
         self._region_name = region_name
 
     @property
@@ -53,10 +58,9 @@ class S3Client(CloudStorageClient):
         Reference: https://docs.aws.amazon.com/boto3/latest/reference/
         services/s3/service-resource/create_bucket.html
         """
-        session = self._get_session()  # pragma: no cover
-        return boto3.resource("s3", region_name=session.region_name)  # pragma: no cover
+        return self._get_session().resource("s3")  # pragma: no cover
 
-    def upload_file(self, local_path: str, key: str) -> bool:
+    def upload_file(self, container: str, local_path: str, key: str) -> bool:
         """Upload a file to the S3 bucket.
 
         Automatically uses multipart upload for files exceeding
@@ -64,6 +68,7 @@ class S3Client(CloudStorageClient):
         upload is performed.
 
         Args:
+            container: The name of the bucket to upload to.
             local_path: The path to the local file to upload.
             key: The S3 object key (destination path within the bucket).
 
@@ -71,30 +76,26 @@ class S3Client(CloudStorageClient):
             True, if the upload was successful
 
         Raises:
-            Value Error         : If key is empty or stars with a leading slash
-            ClientError         : If the upload fails due to
-                                AWS service errors (logged and caught).
-            FileNotFoundError   : If the local_path does not exist.
+            InvalidContainerError: If container is empty or otherwise invalid.
+            InvalidObjectNameError: If key is empty or starts with a leading slash.
+            StorageBackendError: If the upload fails due to AWS service errors.
+            FileNotFoundError: If the local_path does not exist.
 
         """
-        if not key:
-            msg = "Key cannot be empty"
-            log.error(msg)
-            raise ValueError(msg)
-        if key.startswith("/"):
-            msg = "S3 object key cannot start with a leading slash"
-            log.error(msg)
-            raise ValueError(msg)
+        self._validate_container_name(container)
+        self._validate_object_name(key)
         try:
             file_size = Path(local_path).stat().st_size
             if file_size > MULTIPART_THRESHOLD:
-                return self._multipart_upload_file(local_path, key)
+                return self._multipart_upload_file(container, local_path, key)
             log.info("Commencing file upload...")
-            self._s3_client.upload_file(local_path, self._bucket_name, key)
+            self._s3_client.upload_file(local_path, container, key)
             log.info("File Uploaded Sucessfully !")
-        except ClientError:
-            log.exception("Failed to upload", key=key)
-            raise
+        except ClientError as exc:
+            log.exception("Failed to upload", container=container, key=key)
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
         except FileNotFoundError:
             log.exception(
                 "Unable to locate file. Check file path",
@@ -103,77 +104,69 @@ class S3Client(CloudStorageClient):
             raise
         return True
 
-    def upload_obj(self, file_obj: BinaryIO, key: str) -> bool:
-        """Upload a binary file-like object to the S3 bucket.
+    def upload_obj(self, container: str, file_obj: BinaryIO, key: str) -> bool:
+        """Upload a binary file-like object to S3.
 
-        Automatically uses multipart upload for unseekable streams or
-        objects exceeding ``MULTIPART_THRESHOLD``. For smaller seekable
-        objects, a standard single-part upload is performed.
+        Seekable objects smaller than ``MULTIPART_THRESHOLD`` use a standard
+        upload. Larger or unseekable objects use multipart upload.
 
         Args:
-            file_obj: A file-like object to upload. Must be opened in
-                binary mode or be an in-memory bytes buffer
-                (e.g., ``io.BytesIO``). Unseekable streams are supported
-                but will always use multipart upload.
-            key: The S3 object key (destination path within the bucket).
+            container: The name of the bucket to upload to.
+            file_obj: A readable binary file-like object.
+            key: The destination object key within the bucket.
 
         Returns:
-            True if the upload was successful.
+            True if the upload succeeds.
 
         Raises:
-            ValueError : If key is empty, starts with a leading slash,
-                         or file_obje is not a valid binary file-like object.
-            ClientError: If the upload fails due to
-                         AWS service errors (logged and caught).
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If key is invalid.
+            InvalidFileObjectError: If file_obj is not a readable binary object.
+            StorageBackendError: If S3 returns an unexpected error.
 
         """
-        if not key:
-            msg = "Key cannot be empty"
-            log.error(msg)
-            raise ValueError(msg)
-        if key.startswith("/"):
-            msg = "S3 object key cannot start with a leading slash"
-            log.error(msg)
-            raise ValueError(msg)
+        self._validate_container_name(container)
+        self._validate_object_name(key)
         self._validate_file_obj(file_obj=file_obj)
 
         if not file_obj.seekable():
-            return self._multipart_upload_obj(file_obj, key)
+            return self._multipart_upload_obj(container, file_obj, key)
 
         file_obj.seek(0, 2)
         file_size = file_obj.tell()
         file_obj.seek(0)
 
         if file_size > MULTIPART_THRESHOLD:  # pragma: no cover
-            return self._multipart_upload_obj(file_obj, key)  # pragma: no cover
+            return self._multipart_upload_obj(
+                container, file_obj, key
+            )  # pragma: no cover
 
         try:
             log.info("Commencing object upload...")
-            self._s3_client.upload_fileobj(file_obj, self._bucket_name, key)
-        except ClientError:
-            log.exception("Failed to upload object", key=key)
-            raise
+            self._s3_client.upload_fileobj(file_obj, container, key)
+        except ClientError as exc:
+            log.exception("Failed to upload object", container=container, key=key)
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
         return True
 
-    def _multipart_upload_file(self, local_path: str, key: str) -> bool:
-        """Upload a large file using multipart upload.
-
-        Reads the file in chunks of ``MULTIPART_THRESHOLD`` size,
-        uploading each as a separate part. Automatically aborts the
-        multipart upload if any part fails.
+    def _multipart_upload_file(self, container: str, local_path: str, key: str) -> bool:
+        """Upload a large local file using S3 multipart upload.
 
         Args:
-            local_path: The path to the local file to upload.
-            key: The S3 object key (destination path within the bucket).
+            container: The name of the bucket to upload to.
+            local_path: The local file path.
+            key: The destination object key.
 
         Returns:
-            True if the upload was successful.
+            True if the upload succeeds.
 
         Raises:
-            ClientError: If any stage of the multipart upload fails.
+            ClientError: If any multipart step fails.
 
         """
-        response = self.create_multipart_upload(key=key)
+        response = self.create_multipart_upload(container=container, key=key)
         upload_id = response["UploadId"]
         parts = []
 
@@ -182,6 +175,7 @@ class S3Client(CloudStorageClient):
                 part_number = 1
                 while chunk := f.read(MULTIPART_THRESHOLD):
                     part_response = self.upload_part(
+                        container=container,
                         key=key,
                         upload_id=upload_id,
                         part_number=part_number,
@@ -197,36 +191,43 @@ class S3Client(CloudStorageClient):
         except ClientError:  # pragma: no cover
             log.exception(
                 "Multipart upload failed, aborting...",
+                container=container,
                 key=key,
                 upload_id=upload_id,
             )
-            self.abort_multipart_upload(key=key, upload_id=upload_id)
+            self.abort_multipart_upload(
+                container=container,
+                key=key,
+                upload_id=upload_id,
+            )
             raise
 
-        self.complete_multipart_upload(key=key, upload_id=upload_id, parts=parts)
+        self.complete_multipart_upload(
+            container=container,
+            key=key,
+            upload_id=upload_id,
+            parts=parts,
+        )
         return True
 
     def _multipart_upload_obj(
-        self, file_obj: BinaryIO, key: str
+        self, container: str, file_obj: BinaryIO, key: str
     ) -> bool:  # pragma: no cover
-        """Upload a large file-like object using multipart upload.
-
-        Reads the file-like object in chunks of ``MULTIPART_THRESHOLD`` size,
-        uploading each as a separate part. Automatically aborts the
-        multipart upload if any part fails.
+        """Upload a large file-like object using S3 multipart upload.
 
         Args:
-            file_obj: A file-like object opened in binary mode.
-            key: The S3 object key (destination path within the bucket).
+            container: The name of the bucket to upload to.
+            file_obj: A readable binary file-like object.
+            key: The destination object key.
 
         Returns:
-            True if the upload was successful.
+            True if the upload succeeds.
 
         Raises:
-            ClientError: If any stage of the multipart upload fails.
+            ClientError: If any multipart step fails.
 
         """
-        response = self.create_multipart_upload(key=key)
+        response = self.create_multipart_upload(container=container, key=key)
         upload_id = response["UploadId"]
         parts = []
 
@@ -234,6 +235,7 @@ class S3Client(CloudStorageClient):
             part_number = 1
             while chunk := file_obj.read(MULTIPART_THRESHOLD):
                 part_response = self.upload_part(
+                    container=container,
                     key=key,
                     upload_id=upload_id,
                     part_number=part_number,
@@ -249,13 +251,23 @@ class S3Client(CloudStorageClient):
         except ClientError:
             log.exception(
                 "Multipart upload failed, aborting...",
+                container=container,
                 key=key,
                 upload_id=upload_id,
             )
-            self.abort_multipart_upload(key=key, upload_id=upload_id)
+            self.abort_multipart_upload(
+                container=container,
+                key=key,
+                upload_id=upload_id,
+            )
             raise
 
-        self.complete_multipart_upload(key=key, upload_id=upload_id, parts=parts)
+        self.complete_multipart_upload(
+            container=container,
+            key=key,
+            upload_id=upload_id,
+            parts=parts,
+        )
         return True
 
     def create_bucket(
@@ -263,24 +275,17 @@ class S3Client(CloudStorageClient):
         bucket_name: str,
         region_name: str | None = None,
     ) -> bool:
-        """Create an Amazon S3 bucket.
-
-        The name of an Amazon S3 bucket must be unique across
-        all regions of the AWS platform. If region is not specified,
-        the bucket is created in the S3 default region (us-east-1).
+        """Create an S3 bucket.
 
         Args:
-            bucket_name: Bucket to create.
-            region_name: String region to create a bucket in,
-                e.g., ``us-west-2``.
+            bucket_name: The bucket name to create.
+            region_name: Optional AWS region for the new bucket.
 
         Returns:
-            True if the bucket was created successfully,
-            False otherwise.
+            True if the bucket was created successfully, otherwise False.
 
         Raises:
-            ClientError: If the bucket creation fails due to
-                AWS service errors (logged and caught).
+            ClientError: If bucket creation fails.
 
         """
         if region_name is None:  # pragma: no cover
@@ -350,7 +355,7 @@ class S3Client(CloudStorageClient):
     # customizations/s3.html#boto3.s3.transfer.S3Transfer.ALLOWED_UPLOAD_ARGS
     def download_file(
         self,
-        bucket_name: str,
+        container: str,
         object_name: str,
         file_name: str,
     ) -> bool:
@@ -360,32 +365,39 @@ class S3Client(CloudStorageClient):
         and object to download and the filename to save the file to.
 
         Args:
-            bucket_name: The name of the bucket to download from.
+            container: The name of the bucket to download from.
             object_name: The name of the key to download from.
             file_name: The path to the file to download to.
 
         Returns:
-            True if the file was downloaded successfully,
-            False otherwise.
+            True if the file was downloaded successfully.
 
         Raises:
-            ClientError: If the download fails due to
-                AWS service errors (logged and caught).
+            InvalidContainerError: If container is empty or otherwise invalid.
+            InvalidObjectNameError: If object_name is empty or otherwise invalid.
+            ObjectNotFoundError: If the object does not exist.
+            StorageBackendError: If the download fails due to AWS service errors.
 
         """
+        self._validate_container_name(container)
+        self._validate_object_name(object_name)
         try:
             log.info("Downloading S3 Object to a file...")
             self._s3_resource.meta.client.download_file(
-                bucket_name, object_name, file_name
+                container, object_name, file_name
             )
-        except ClientError:
+        except ClientError as exc:
             log.exception(
                 "Failed to download file from Amazon S3 Bucket",
-                bucket_name=bucket_name,
+                container=container,
                 object_name=object_name,
                 file_name=file_name,
             )
-            return False
+            raise self._translate_client_error(
+                exc,
+                container=container,
+                key=object_name,
+            ) from exc
         return True
 
     # Note: Consider combining download_file and download_fileobj in the future
@@ -437,89 +449,74 @@ class S3Client(CloudStorageClient):
             return False
         return True
 
-    def list_files(self, prefix: str = "") -> list[str]:
-        """List objects in the S3 bucket.
-
-        The ``list_files`` method returns a list of object keys
-        in the bucket, optionally filtered by a prefix.
+    def list_files(self, container: str, prefix: str = "") -> list[str]:
+        """List object keys in an S3 bucket.
 
         Args:
-            prefix: The prefix to filter objects by. Defaults to
-                empty string which returns all objects.
+            container: The name of the bucket to list from.
+            prefix: Optional key prefix filter.
 
         Returns:
-            A list of object keys matching the prefix.
+            A list of matching object keys.
 
         Raises:
-            ClientError : If the listing fails due to
-                        AWS service errors (logged and caught).
+            InvalidContainerError: If container is invalid.
+            StorageBackendError: If listing fails.
 
         """
+        self._validate_container_name(container)
         try:
-            response = self._s3_client.list_objects_v2(
-                Bucket=self._bucket_name,
-                Prefix=prefix,
-            )
-            contents = response.get("Contents", [])
-            return [obj["Key"] for obj in contents]
+            paginator = self._s3_client.get_paginator("list_objects_v2")
+            pages = paginator.paginate(Bucket=container, Prefix=prefix)
+            return [obj["Key"] for page in pages for obj in page.get("Contents", [])]
         except ClientError as exc:
-            raise NotImplementedError from exc
+            raise self._translate_client_error(exc, container=container) from exc
 
     # Note: Batch deletion of multiple files could be added for efficiency
     def delete_file(
         self,
-        bucket_name: str,
+        container: str,
         object_name: str,
     ) -> bool:
         """Remove an object from a bucket.
 
-        The behavior depends on the bucket's versioning state:
-
-        - If bucket versioning is not enabled, the operation
-          permanently deletes the object.
-        - If bucket versioning is enabled, the operation inserts
-          a delete marker, which becomes the current version of
-          the object. To permanently delete an object in a
-          versioned bucket, you must include the object's
-          ``versionId`` in the request.
-
-        You can delete objects by explicitly calling DELETE Object
-        or calling (PutBucketLifecycle) to enable Amazon S3 to
-        remove them for you.
-
         Args:
-            bucket_name: The name of the bucket containing
-                the object.
-            object_name: The name of object to delete.
+            container: The name of the bucket containing the object.
+            object_name: The object key to delete.
 
         Returns:
-            A dict with ``DeleteMarker`` (bool) indicating
-            whether the specified object version that was
-            permanently deleted was a delete marker before
-            deletion.
+            True if the object was deleted successfully.
 
         Raises:
-            ClientError: If the deletion fails due to
-                AWS service errors (logged and caught).
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If object_name is invalid.
+            ObjectNotFoundError: If the object does not exist.
+            StorageBackendError: If the deletion fails.
 
         """
+        self._validate_container_name(container)
+        self._validate_object_name(object_name)
         try:
+            self._s3_client.head_object(Bucket=container, Key=object_name)
             log.info("Deleting S3 Object...")
-            self._s3_client.delete_object(Bucket=bucket_name, Key=object_name)
-        except ClientError:
+            self._s3_client.delete_object(Bucket=container, Key=object_name)
+        except ClientError as exc:
             log.exception(
                 "Failed to delete object from Amazon S3 Bucket",
-                bucket_name=bucket_name,
+                container=container,
                 object_name=object_name,
             )
-            return False
+            raise self._translate_client_error(
+                exc,
+                container=container,
+                key=object_name,
+            ) from exc
         return True
 
     # Helpers
     def _get_session(self) -> boto3.Session:
-        """Create and return a boto3 Session using the AWS_REGION env var."""
-        region = os.environ["AWS_REGION"]  # KeyError if missing (tests expect this)
-        return boto3.Session(region_name=region)
+        """Create and return a boto3 Session for the configured region."""
+        return boto3.Session(region_name=self._region_name)
 
     def get_session(self) -> boto3.Session:  # pragma: no cover
         """Return a boto3 Session for the configured region."""
@@ -532,24 +529,24 @@ class S3Client(CloudStorageClient):
             file_obj: The file-like object to validate.
 
         Raises:
-            ValueError: If the file object is not readable or not in binary mode.
+            InvalidFileObjectError: If the file object is not readable or not binary.
 
         """
         try:
             if not file_obj.readable():
                 msg = "file_obj must be readable"
                 log.error(msg)
-                raise ValueError(msg)
+                raise InvalidFileObjectError(msg)
             if isinstance(file_obj.read(0), str):
                 msg = "file_obj must be opened in binary mode, not text mode"
                 log.error(msg)
-                raise TypeError(msg)
+                raise InvalidFileObjectError(msg)
         except AttributeError as exc:
             msg = "file_obj must be a file-like object with a read() method"
             log.exception(msg)
-            raise ValueError(msg) from exc
+            raise InvalidFileObjectError(msg) from exc
 
-    def create_multipart_upload(self, key: str) -> dict[str, Any]:
+    def create_multipart_upload(self, container: str, key: str) -> dict[str, Any]:
         """Initiate a multipart upload and return the upload ID.
 
         Must be called before ``upload_part``. The ``UploadId`` in the
@@ -562,42 +559,42 @@ class S3Client(CloudStorageClient):
             stored parts indefinitely.
 
         Args:
+            container: The name of the bucket to upload to.
             key: The S3 object key to upload to.
 
         Returns:
             The raw boto3 response dict containing UploadId
 
         Raises:
-            ValueError  : If ``key`` is empty or starts with a leading slash.
-            ClientError : If the request fails due to AWS service errors.
+            InvalidContainerError: If container is empty or otherwise invalid.
+            InvalidObjectNameError: If ``key`` is empty or starts with a leading slash.
+            StorageBackendError: If the request fails due to AWS service errors.
 
         """
-        if not key:
-            msg = "Key cannot be empty"
-            log.error(msg)
-            raise ValueError(msg)
-        if key.startswith("/"):
-            msg = "S3 object key cannot start with a leading slash"
-            log.error(msg)
-            raise ValueError(msg)
+        self._validate_container_name(container)
+        self._validate_object_name(key)
         kwargs = {
-            "Bucket": self._bucket_name,
+            "Bucket": container,
             "Key": key,
         }
         try:
             log.info("Initializing Multipart Upload...")
             response: dict[str, Any] = self._s3_client.create_multipart_upload(**kwargs)
             log.info("SUCCESS! Multipart Upload is completed")
-        except ClientError:
+        except ClientError as exc:
             log.exception(
                 "Failed Multipart Upload",
+                container=container,
                 key=key,
             )
-            raise
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
         return response
 
     def upload_part(
         self,
+        container: str,
         key: str,
         upload_id: str,
         part_number: int,
@@ -605,60 +602,31 @@ class S3Client(CloudStorageClient):
     ) -> dict[str, object]:
         """Upload a single part in a multipart upload.
 
-        Must be called after ``create_multipart_upload`` and before
-        ``complete_multipart_upload`` or ``abort_multipart_upload``.
-        ***Collect the returned ``ETag``*** from each part — you will need
-        them to complete the upload.
-
-        Part numbers must be between 1 and 10,000 inclusive and define
-        the part's position in the final assembled object. Uploading a
-        new part with an already-used part number overwrites the
-        previous part.
-
         Args:
-            key: The S3 object key that was supplied to
-                ``create_multipart_upload``.
-            upload_id: The upload ID returned by
-                ``create_multipart_upload``.
-            part_number: Position of this part in the object (1-10,000).
-            body: The raw bytes or a binary file-like object for this
-                part. All parts except the last must be at least 5 MB.
+            container: The name of the bucket to upload to.
+            key: The destination object key.
+            upload_id: The multipart upload identifier.
+            part_number: Part index in the range 1-10000.
+            body: Raw bytes or a binary file-like object for the part.
 
         Returns:
-            The raw boto3 response dict. The ``'ETag'`` key is required
-            when assembling the ``Parts`` list for
-            ``complete_multipart_upload``::
-
-                {
-                    'ETag': '"d8c2eafd90c266e19ab9dcacc479f8af"',
-                    'ChecksumCRC32': 'string',
-                    'ChecksumSHA256': 'string',
-                    ...
-                }
+            The raw boto3 response dictionary for the uploaded part.
 
         Raises:
-            ValueError: If ``key`` is empty, starts with ``'/'``, or
-                ``part_number`` is outside the 1-10,000 range.
-            ClientError: If the upload fails due to AWS service errors,
-                including ``NoSuchUpload`` (404) when the ``upload_id``
-                is invalid or the multipart upload has already been
-                completed or aborted.
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If key is invalid.
+            ValueError: If part_number is outside the allowed range.
+            StorageBackendError: If S3 rejects the part upload.
 
         """
-        if not key:
-            msg = "Key cannot be empty"
-            log.error(msg)
-            raise ValueError(msg)
-        if key.startswith("/"):
-            msg = "S3 object key cannot start with a leading slash"
-            log.error(msg)
-            raise ValueError(msg)
+        self._validate_container_name(container)
+        self._validate_object_name(key)
         if not 1 <= part_number <= MAX_LIMIT:
             msg = "part_number must be in the range 1-10000 (inclusive)"
             log.error(msg)
             raise ValueError(msg)
         kwargs: dict[str, object] = {
-            "Bucket": self._bucket_name,
+            "Bucket": container,
             "Key": key,
             "PartNumber": part_number,
             "UploadId": upload_id,
@@ -671,122 +639,159 @@ class S3Client(CloudStorageClient):
                 part_number=part_number,
             )
             response: dict[str, object] = self._s3_client.upload_part(**kwargs)
-        except ClientError:
+        except ClientError as exc:
             log.exception(
                 "Failed to upload part",
+                container=container,
                 key=key,
                 part_number=part_number,
                 upload_id=upload_id,
             )
-            raise
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
         return response
 
-    def abort_multipart_upload(self, key: str, upload_id: str) -> bool:
-        """Abort an in-progress multipart upload and discard all uploaded parts.
-
-        Should be called when a multipart upload fails or is no longer needed.
-        Once aborted, the ``upload_id`` becomes invalid and all stored parts
-        are deleted, stopping AWS from charging for them.
+    def abort_multipart_upload(self, container: str, key: str, upload_id: str) -> bool:
+        """Abort an in-progress multipart upload.
 
         Args:
-            key: The S3 object key supplied to ``create_multipart_upload``.
-            upload_id: The upload ID returned by ``create_multipart_upload``.
+            container: The name of the bucket that owns the upload.
+            key: The destination object key.
+            upload_id: The multipart upload identifier.
 
         Returns:
-            True if the multipart upload was successfully aborted,
-            False otherwise.
+            True if the abort succeeds.
 
         Raises:
-            ValueError: If ``key`` is empty or starts with a leading slash.
-            ClientError: If the request fails due to AWS service errors,
-                including ``NoSuchUpload`` (404) if the ``upload_id`` is
-                invalid or has already been completed or aborted.
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If key is invalid.
+            StorageBackendError: If S3 rejects the abort request.
 
         """
-        if not key:
-            msg = "Key cannot be empty"
-            log.error(msg)
-            raise ValueError(msg)
-        if key.startswith("/"):
-            msg = "S3 object key cannot start with a leading slash"
-            log.error(msg)
-            raise ValueError(msg)
+        self._validate_container_name(container)
+        self._validate_object_name(key)
         try:
-            log.info("Aborting multipart upload...", key=key, upload_id=upload_id)
-            self._s3_client.abort_multipart_upload(
-                Bucket=self._bucket_name,
-                Key=key,
-                UploadId=upload_id,
-            )
-            log.info("SUCCESS! Multipart upload aborted", key=key, upload_id=upload_id)
-        except ClientError:
-            log.exception(
-                "Failed to abort multipart upload",
+            log.info(
+                "Aborting multipart upload...",
+                container=container,
                 key=key,
                 upload_id=upload_id,
             )
-            return False
+            self._s3_client.abort_multipart_upload(
+                Bucket=container,
+                Key=key,
+                UploadId=upload_id,
+            )
+            log.info(
+                "SUCCESS! Multipart upload aborted",
+                container=container,
+                key=key,
+                upload_id=upload_id,
+            )
+        except ClientError as exc:
+            log.exception(
+                "Failed to abort multipart upload",
+                container=container,
+                key=key,
+                upload_id=upload_id,
+            )
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
         return True
 
     def complete_multipart_upload(
         self,
+        container: str,
         key: str,
         upload_id: str,
         parts: list[dict[str, Any]],
     ) -> bool:
-        """Complete a multipart upload by assembling the uploaded parts.
-
-        Must be called after all ``upload_part`` calls have succeeded.
-        Parts are assembled in order of their ``PartNumber``, not the
-        order they were uploaded.
+        """Complete a multipart upload by assembling uploaded parts.
 
         Args:
-            key: The S3 object key supplied to ``create_multipart_upload``.
-            upload_id: The upload ID returned by ``create_multipart_upload``.
-            parts: List of dicts collected from each ``upload_part`` response,
-                each containing ``'PartNumber'`` and ``'ETag'``::
-
-                    [
-                        {"PartNumber": 1, "ETag": '"abc123..."'},
-                        {"PartNumber": 2, "ETag": '"def456..."'},
-                    ]
+            container: The name of the bucket that owns the upload.
+            key: The destination object key.
+            upload_id: The multipart upload identifier.
+            parts: Uploaded part metadata including part numbers and ETags.
 
         Returns:
-            True if the uploaded parts were successfully assembled and uploaded,
-            False otherwise.
+            True if the multipart upload is completed successfully.
 
         Raises:
-            ValueError: If ``key`` is empty or starts with a leading slash.
-            ClientError: If the request fails due to AWS service errors,
-                including ``NoSuchUpload`` (404) if the ``upload_id`` is
-                invalid or has already been completed or aborted.
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If key is invalid.
+            StorageBackendError: If S3 rejects the completion request.
 
         """
-        if not key:
-            msg = "Key cannot be empty"
-            log.error(msg)
-            raise ValueError(msg)
-        if key.startswith("/"):
-            msg = "S3 object key cannot start with a leading slash"
-            log.error(msg)
-            raise ValueError(msg)
+        self._validate_container_name(container)
+        self._validate_object_name(key)
         try:
-            log.info("Assembling uploaded parts for multipart upload...", key=key)
+            log.info(
+                "Assembling uploaded parts for multipart upload...",
+                container=container,
+                key=key,
+            )
             self._s3_client.complete_multipart_upload(
-                Bucket=self._bucket_name,
+                Bucket=container,
                 Key=key,
                 UploadId=upload_id,
                 MultipartUpload={"Parts": parts},
             )
             log.info("SUCESS! All parts are assesmbled and finished uploading")
-        except ClientError:
+        except ClientError as exc:
             log.exception(
                 "Failed to assemble parts and complete multipart upload",
+                container=container,
                 key=key,
                 parts=parts,
             )
-            return False
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
         return True
+
+    def _validate_container_name(self, container: str) -> None:
+        """Validate a container / bucket name before calling S3."""
+        if not container:
+            msg = "Container cannot be empty"
+            log.error(msg)
+            raise InvalidContainerError(msg)
+
+    def _validate_object_name(self, key: str) -> None:
+        """Validate an S3 object key before calling S3."""
+        if not key:
+            msg = "Key cannot be empty"
+            log.error(msg)
+            raise InvalidObjectNameError(msg)
+        if key.startswith("/"):
+            msg = "S3 object key cannot start with a leading slash"
+            log.error(msg)
+            raise InvalidObjectNameError(msg)
+
+    def _translate_client_error(
+        self,
+        exc: ClientError,
+        *,
+        container: str,
+        key: str | None = None,
+    ) -> StorageBackendError | ObjectNotFoundError:
+        """Convert boto3 errors into provider-agnostic domain exceptions."""
+        error = exc.response.get("Error", {})
+        error_code = str(error.get("Code", "")).lower()
+        if error_code in {"404", "nosuchkey", "nosuchbucket", "notfound"}:
+            if key is None:
+                msg = f"Container '{container}' was not found"
+            else:
+                msg = f"Object '{key}' was not found in container '{container}'"
+            return ObjectNotFoundError(msg)
+
+        if key is None:
+            msg = f"S3 operation failed for container '{container}'"
+        else:
+            msg = f"S3 operation failed for object '{key}' in container '{container}'"
+        return StorageBackendError(msg)
 
 
 def get_client_impl(*, interactive: bool = False) -> S3Client:  # noqa: ARG001  # reserved for future CLI interactive-mode support; signature must match the factory callable protocol
@@ -797,7 +802,4 @@ def get_client_impl(*, interactive: bool = False) -> S3Client:  # noqa: ARG001  
     if region.startswith("${") and region.endswith("}"):
         region = "us-east-1"
 
-    return S3Client(
-        bucket_name=os.environ["AWS_BUCKET_NAME"],
-        region_name=region,
-    )
+    return S3Client(region_name=region)

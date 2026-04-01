@@ -7,6 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
+from cloud_storage_client_api.exceptions import (
+    InvalidObjectNameError,
+    StorageBackendError,
+)
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -76,7 +80,7 @@ def test_upload_returns_502_on_exception(
     mock_storage_client: MagicMock,
 ) -> None:
     """POST returns 502 when upload_object raises an exception."""
-    mock_storage_client.upload_obj.side_effect = RuntimeError("connection lost")
+    mock_storage_client.upload_obj.side_effect = StorageBackendError("connection lost")
 
     response = client.post(
         "/files/my-bucket/photo.jpg",
@@ -93,7 +97,9 @@ def test_upload_returns_400_on_value_error(
     mock_storage_client: MagicMock,
 ) -> None:
     """POST returns 400 when upload_object raises ValueError (e.g. bad key)."""
-    mock_storage_client.upload_obj.side_effect = ValueError("Key cannot be empty")
+    mock_storage_client.upload_obj.side_effect = InvalidObjectNameError(
+        "Key cannot be empty"
+    )
 
     response = client.post(
         "/files/my-bucket/photo.jpg",
@@ -118,7 +124,8 @@ def test_upload_calls_client_with_correct_args(
     )
 
     args, _kwargs = mock_storage_client.upload_obj.call_args
-    assert args[1] == "photo.jpg"
+    assert args[0] == "my-bucket"
+    assert args[2] == "photo.jpg"
 
 
 @pytest.mark.circleci
@@ -137,4 +144,5 @@ def test_upload_nested_key(
     assert response.status_code == HTTP_OK
     assert response.json() == {"ok": True}
     args, _kwargs = mock_storage_client.upload_obj.call_args
-    assert args[1] == "folder/sub/photo.jpg"
+    assert args[0] == "my-bucket"
+    assert args[2] == "folder/sub/photo.jpg"

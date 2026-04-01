@@ -1,52 +1,52 @@
 from http import HTTPStatus
-from typing import Any, cast
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
-from ...client import AuthenticatedClient, Client
-from ...types import Response, UNSET
 from ... import errors
-
+from ...client import AuthenticatedClient, Client
 from ...models.http_validation_error import HTTPValidationError
 from ...models.operation_result import OperationResult
-from typing import cast
-
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     container: str,
     object_name: str,
-
+    *,
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
 ) -> dict[str, Any]:
-    
+    headers: dict[str, Any] = {}
+    if not isinstance(x_api_key, Unset):
+        headers["X-API-Key"] = x_api_key
 
-    
-
-    
+    if not isinstance(authorization, Unset):
+        headers["authorization"] = authorization
 
     _kwargs: dict[str, Any] = {
         "method": "delete",
-        "url": "/files/{container}/{object_name}".format(container=quote(str(container), safe=""),object_name=quote(str(object_name), safe=""),),
+        "url": "/files/{container}/{object_name}".format(
+            container=quote(str(container), safe=""),
+            object_name=quote(str(object_name), safe=""),
+        ),
     }
 
-
+    _kwargs["headers"] = headers
     return _kwargs
 
 
-
-def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> HTTPValidationError | OperationResult | None:
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> HTTPValidationError | OperationResult | None:
     if response.status_code == 200:
         response_200 = OperationResult.from_dict(response.json())
-
-
 
         return response_200
 
     if response.status_code == 422:
         response_422 = HTTPValidationError.from_dict(response.json())
-
-
 
         return response_422
 
@@ -56,7 +56,9 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         return None
 
 
-def _build_response(*, client: AuthenticatedClient | Client, response: httpx.Response) -> Response[HTTPValidationError | OperationResult]:
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[HTTPValidationError | OperationResult]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -70,9 +72,10 @@ def sync_detailed(
     object_name: str,
     *,
     client: AuthenticatedClient | Client,
-
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
 ) -> Response[HTTPValidationError | OperationResult]:
-    """ Delete Object
+    """Delete Object
 
      Delete an object from a bucket (container).
 
@@ -85,12 +88,15 @@ def sync_detailed(
         OperationResult with ok=True on success.
 
     Raises:
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 502 if the storage backend raises an exception.
-        HTTPException: 404 if the deletion returns failure.
+        HTTPException: 404 if the object does not exist.
 
     Args:
         container (str):
         object_name (str):
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -98,13 +104,13 @@ def sync_detailed(
 
     Returns:
         Response[HTTPValidationError | OperationResult]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         container=container,
-object_name=object_name,
-
+        object_name=object_name,
+        x_api_key=x_api_key,
+        authorization=authorization,
     )
 
     response = client.get_httpx_client().request(
@@ -113,14 +119,16 @@ object_name=object_name,
 
     return _build_response(client=client, response=response)
 
+
 def sync(
     container: str,
     object_name: str,
     *,
     client: AuthenticatedClient | Client,
-
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
 ) -> HTTPValidationError | OperationResult | None:
-    """ Delete Object
+    """Delete Object
 
      Delete an object from a bucket (container).
 
@@ -133,12 +141,15 @@ def sync(
         OperationResult with ok=True on success.
 
     Raises:
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 502 if the storage backend raises an exception.
-        HTTPException: 404 if the deletion returns failure.
+        HTTPException: 404 if the object does not exist.
 
     Args:
         container (str):
         object_name (str):
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -146,24 +157,26 @@ def sync(
 
     Returns:
         HTTPValidationError | OperationResult
-     """
-
+    """
 
     return sync_detailed(
         container=container,
-object_name=object_name,
-client=client,
-
+        object_name=object_name,
+        client=client,
+        x_api_key=x_api_key,
+        authorization=authorization,
     ).parsed
+
 
 async def asyncio_detailed(
     container: str,
     object_name: str,
     *,
     client: AuthenticatedClient | Client,
-
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
 ) -> Response[HTTPValidationError | OperationResult]:
-    """ Delete Object
+    """Delete Object
 
      Delete an object from a bucket (container).
 
@@ -176,12 +189,15 @@ async def asyncio_detailed(
         OperationResult with ok=True on success.
 
     Raises:
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 502 if the storage backend raises an exception.
-        HTTPException: 404 if the deletion returns failure.
+        HTTPException: 404 if the object does not exist.
 
     Args:
         container (str):
         object_name (str):
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -189,29 +205,29 @@ async def asyncio_detailed(
 
     Returns:
         Response[HTTPValidationError | OperationResult]
-     """
-
+    """
 
     kwargs = _get_kwargs(
         container=container,
-object_name=object_name,
-
+        object_name=object_name,
+        x_api_key=x_api_key,
+        authorization=authorization,
     )
 
-    response = await client.get_async_httpx_client().request(
-        **kwargs
-    )
+    response = await client.get_async_httpx_client().request(**kwargs)
 
     return _build_response(client=client, response=response)
+
 
 async def asyncio(
     container: str,
     object_name: str,
     *,
     client: AuthenticatedClient | Client,
-
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
 ) -> HTTPValidationError | OperationResult | None:
-    """ Delete Object
+    """Delete Object
 
      Delete an object from a bucket (container).
 
@@ -224,12 +240,15 @@ async def asyncio(
         OperationResult with ok=True on success.
 
     Raises:
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 502 if the storage backend raises an exception.
-        HTTPException: 404 if the deletion returns failure.
+        HTTPException: 404 if the object does not exist.
 
     Args:
         container (str):
         object_name (str):
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -237,12 +256,14 @@ async def asyncio(
 
     Returns:
         HTTPValidationError | OperationResult
-     """
+    """
 
-
-    return (await asyncio_detailed(
-        container=container,
-object_name=object_name,
-client=client,
-
-    )).parsed
+    return (
+        await asyncio_detailed(
+            container=container,
+            object_name=object_name,
+            client=client,
+            x_api_key=x_api_key,
+            authorization=authorization,
+        )
+    ).parsed

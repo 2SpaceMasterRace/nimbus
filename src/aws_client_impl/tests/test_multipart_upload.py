@@ -29,7 +29,7 @@ def test_multipart_upload_file_completes_on_success(
     p = tmp_path / "f.bin"
     p.write_bytes(b"abcdef")  # 6 bytes -> 2 parts of 3
 
-    c = S3Client(bucket_name="my-bucket")
+    c = S3Client()
 
     mocker.patch.object(c, "create_multipart_upload", return_value={"UploadId": "u1"})
     mocker.patch.object(
@@ -40,11 +40,12 @@ def test_multipart_upload_file_completes_on_success(
     complete = mocker.patch.object(c, "complete_multipart_upload", return_value=True)
     abort = mocker.patch.object(c, "abort_multipart_upload", return_value=True)
 
-    ok = c._multipart_upload_file(local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
+    ok = c._multipart_upload_file(container="my-bucket", local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
 
     assert ok is True
     abort.assert_not_called()
     complete.assert_called_once_with(
+        container="my-bucket",
         key="k",
         upload_id="u1",
         parts=[
@@ -64,7 +65,7 @@ def test_multipart_upload_file_aborts_on_part_failure(
     p = tmp_path / "f.bin"
     p.write_bytes(b"abcdef")
 
-    c = S3Client(bucket_name="my-bucket")
+    c = S3Client()
 
     mocker.patch.object(c, "create_multipart_upload", return_value={"UploadId": "u1"})
     mocker.patch.object(c, "upload_part", side_effect=_client_error())
@@ -72,7 +73,7 @@ def test_multipart_upload_file_aborts_on_part_failure(
     abort = mocker.patch.object(c, "abort_multipart_upload", return_value=True)
 
     with pytest.raises(ClientError):
-        c._multipart_upload_file(local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
+        c._multipart_upload_file(container="my-bucket", local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
 
-    abort.assert_called_once_with(key="k", upload_id="u1")
+    abort.assert_called_once_with(container="my-bucket", key="k", upload_id="u1")
     complete.assert_not_called()

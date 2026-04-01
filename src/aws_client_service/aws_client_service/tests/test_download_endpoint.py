@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
+from cloud_storage_client_api.exceptions import ObjectNotFoundError, StorageBackendError
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 HTTP_OK = 200
+HTTP_BAD_REQUEST = 400
 HTTP_NOT_FOUND = 404
 HTTP_UNPROCESSABLE = 422
 HTTP_BAD_GATEWAY = 502
@@ -70,7 +72,7 @@ def test_download_returns_file_on_success(
 
     response = client.get(
         "/download",
-        params={"bucket_name": "my-bucket", "object_name": "report.csv"},
+        params={"container": "my-bucket", "object_name": "report.csv"},
     )
 
     assert response.status_code == HTTP_OK
@@ -82,16 +84,21 @@ def test_download_returns_404_on_failure(
     client: TestClient,
     mock_storage_client: MagicMock,
 ) -> None:
-    """GET /download returns 404 when download_file returns False."""
-    mock_storage_client.download_file.return_value = False
+    """GET /download returns 404 when download_file raises ObjectNotFoundError."""
+    mock_storage_client.download_file.side_effect = ObjectNotFoundError(
+        "Object 'missing.txt' was not found in container 'my-bucket'"
+    )
 
     response = client.get(
         "/download",
-        params={"bucket_name": "my-bucket", "object_name": "missing.txt"},
+        params={"container": "my-bucket", "object_name": "missing.txt"},
     )
 
     assert response.status_code == HTTP_NOT_FOUND
-    assert response.json()["detail"] == "Object not found or download failed"
+    assert (
+        response.json()["detail"]
+        == "Object 'missing.txt' was not found in container 'my-bucket'"
+    )
 
 
 @pytest.mark.circleci
@@ -100,11 +107,13 @@ def test_download_returns_502_on_exception(
     mock_storage_client: MagicMock,
 ) -> None:
     """GET /download returns 502 when download_file raises an exception."""
-    mock_storage_client.download_file.side_effect = RuntimeError("connection lost")
+    mock_storage_client.download_file.side_effect = StorageBackendError(
+        "connection lost"
+    )
 
     response = client.get(
         "/download",
-        params={"bucket_name": "my-bucket", "object_name": "data.bin"},
+        params={"container": "my-bucket", "object_name": "data.bin"},
     )
 
     assert response.status_code == HTTP_BAD_GATEWAY
@@ -114,7 +123,7 @@ def test_download_returns_502_on_exception(
 @pytest.mark.circleci
 @pytest.mark.usefixtures("mock_storage_client")
 def test_download_missing_bucket_name(client: TestClient) -> None:
-    """GET /download without bucket_name returns 422 validation error."""
+    """GET /download without container returns 422 validation error."""
     response = client.get("/download", params={"object_name": "file.txt"})
 
     assert response.status_code == HTTP_UNPROCESSABLE
@@ -124,7 +133,7 @@ def test_download_missing_bucket_name(client: TestClient) -> None:
 @pytest.mark.usefixtures("mock_storage_client")
 def test_download_missing_object_name(client: TestClient) -> None:
     """GET /download without object_name returns 422 validation error."""
-    response = client.get("/download", params={"bucket_name": "my-bucket"})
+    response = client.get("/download", params={"container": "my-bucket"})
 
     assert response.status_code == HTTP_UNPROCESSABLE
 
@@ -144,7 +153,7 @@ def test_download_sets_filename_header(
 
     response = client.get(
         "/download",
-        params={"bucket_name": "my-bucket", "object_name": "reports/archive.zip"},
+        params={"container": "my-bucket", "object_name": "reports/archive.zip"},
     )
 
     assert response.status_code == HTTP_OK
@@ -170,7 +179,7 @@ def test_download_removes_temp_file_after_successful_response(
 
     response = client.get(
         "/download",
-        params={"bucket_name": "my-bucket", "object_name": "cleanup.txt"},
+        params={"container": "my-bucket", "object_name": "cleanup.txt"},
     )
 
     assert response.status_code == HTTP_OK

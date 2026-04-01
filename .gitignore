@@ -54,6 +54,7 @@ Thumbs.db
 # Credentials / secrets
 credentials.json
 token.json
+credentials.env
 
 # Environment variables
 .env
@@ -63,10 +64,15 @@ token.json
 # Logs
 *.log
 
+# Local curl-test harness storage
+.curl-test-storage/
+
 # Sphinx build output (generated, not source-controlled)
 docs/build/
 
 # Assignment PDFs and session files (local only, not for version control)
 *.pdf
+Homework*.txt
+OSPSD Spring*.txt
 session-prompt.md
 plans.md

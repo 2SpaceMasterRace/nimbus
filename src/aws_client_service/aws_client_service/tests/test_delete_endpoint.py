@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
+from cloud_storage_client_api.exceptions import ObjectNotFoundError, StorageBackendError
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 HTTP_OK = 200
+HTTP_BAD_REQUEST = 400
 HTTP_NOT_FOUND = 404
 HTTP_BAD_GATEWAY = 502
 
@@ -54,13 +56,18 @@ def test_delete_returns_404_on_failure(
     client: TestClient,
     mock_storage_client: MagicMock,
 ) -> None:
-    """DELETE returns 404 when delete_file returns False."""
-    mock_storage_client.delete_file.return_value = False
+    """DELETE returns 404 when delete_file raises ObjectNotFoundError."""
+    mock_storage_client.delete_file.side_effect = ObjectNotFoundError(
+        "Object 'my-key' was not found in container 'my-bucket'"
+    )
 
     response = client.delete("/files/my-bucket/my-key")
 
     assert response.status_code == HTTP_NOT_FOUND
-    assert response.json()["detail"] == "Object not found or delete failed"
+    assert (
+        response.json()["detail"]
+        == "Object 'my-key' was not found in container 'my-bucket'"
+    )
 
 
 @pytest.mark.circleci
@@ -69,7 +76,7 @@ def test_delete_returns_502_on_exception(
     mock_storage_client: MagicMock,
 ) -> None:
     """DELETE /files/{container}/{object_name} returns 502 when delete_file raises."""
-    mock_storage_client.delete_file.side_effect = RuntimeError("connection lost")
+    mock_storage_client.delete_file.side_effect = StorageBackendError("connection lost")
 
     response = client.delete("/files/my-bucket/my-key")
 

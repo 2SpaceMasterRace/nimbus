@@ -7,9 +7,9 @@ to know which class they receive.
 """
 
 import pytest
-from aws_client_impl.s3_client import S3Client
+from aws_client_impl.s3_client import S3Client, get_client_impl
 from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.factory import get_client
+from cloud_storage_client_api.factory import get_client, register_client
 
 import aws_client_impl  # noqa: F401  — registers S3Client factory as side-effect
 
@@ -19,7 +19,8 @@ pytestmark = pytest.mark.integration
 @pytest.mark.circleci
 def test_dependency_injection_works(monkeypatch: pytest.MonkeyPatch) -> None:
     """Importing aws_client_impl registers S3Client with the interface factory."""
-    monkeypatch.setenv("AWS_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    register_client(get_client_impl)
     client = get_client()
     assert isinstance(client, CloudStorageClient)
     assert isinstance(client, S3Client)
@@ -28,7 +29,8 @@ def test_dependency_injection_works(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.circleci
 def test_factory_returns_distinct_instances(monkeypatch: pytest.MonkeyPatch) -> None:
     """get_client() returns distinct CloudStorageClient instances on each call."""
-    monkeypatch.setenv("AWS_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("AWS_REGION", "us-east-1")
+    register_client(get_client_impl)
     client1 = get_client()
     client2 = get_client()
     assert isinstance(client1, CloudStorageClient)

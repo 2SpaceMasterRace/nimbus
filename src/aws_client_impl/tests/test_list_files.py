@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
+from cloud_storage_client_api.exceptions import StorageBackendError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -24,21 +25,24 @@ def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
     fake_session.client.return_value = fake_boto_client
     fake_session.region_name = "us-east-1"
     mocker.patch.object(S3Client, "_get_session", return_value=fake_session)
-    return S3Client(bucket_name="my-bucket")
+    return S3Client()
 
 
 def test_list_files_returns_keys_on_success(mocker: "MockerFixture") -> None:
     """Test list_files returns object keys when Contents is present."""
     fake_boto_client = mocker.Mock()
-    fake_boto_client.list_objects_v2.return_value = {
-        "Contents": [{"Key": "a.txt"}, {"Key": "b.txt"}],
-    }
+    fake_paginator = mocker.Mock()
+    fake_paginator.paginate.return_value = [
+        {"Contents": [{"Key": "a.txt"}, {"Key": "b.txt"}]}
+    ]
+    fake_boto_client.get_paginator.return_value = fake_paginator
     c = _make_client(mocker, fake_boto_client)
 
-    keys = c.list_files(prefix="")
+    keys = c.list_files(container="my-bucket", prefix="")
 
     assert keys == ["a.txt", "b.txt"]
-    fake_boto_client.list_objects_v2.assert_called_once_with(
+    fake_boto_client.get_paginator.assert_called_once_with("list_objects_v2")
+    fake_paginator.paginate.assert_called_once_with(
         Bucket="my-bucket",
         Prefix="",
     )
@@ -49,27 +53,29 @@ def test_list_files_returns_empty_list_when_no_contents(
 ) -> None:
     """Test list_files returns [] when Contents is missing."""
     fake_boto_client = mocker.Mock()
-    fake_boto_client.list_objects_v2.return_value = {}
+    fake_paginator = mocker.Mock()
+    fake_paginator.paginate.return_value = [{}]
+    fake_boto_client.get_paginator.return_value = fake_paginator
     c = _make_client(mocker, fake_boto_client)
 
-    keys = c.list_files(prefix="x/")
+    keys = c.list_files(container="my-bucket", prefix="x/")
 
     assert keys == []
-    fake_boto_client.list_objects_v2.assert_called_once_with(
+    fake_paginator.paginate.assert_called_once_with(
         Bucket="my-bucket",
         Prefix="x/",
     )
 
 
-def test_list_files_raises_notimplementederror_on_client_error(
+def test_list_files_raises_storage_backend_error_on_client_error(
     mocker: "MockerFixture",
 ) -> None:
-    """Test list_files raises NotImplementedError on ClientError."""
+    """Test list_files raises StorageBackendError on ClientError."""
     fake_boto_client = mocker.Mock()
-    fake_boto_client.list_objects_v2.side_effect = _client_error()
+    fake_boto_client.get_paginator.side_effect = _client_error()
     c = _make_client(mocker, fake_boto_client)
 
-    with pytest.raises(NotImplementedError):
-        c.list_files(prefix="")
+    with pytest.raises(StorageBackendError):
+        c.list_files(container="my-bucket", prefix="")
 
-    fake_boto_client.list_objects_v2.assert_called_once()
+    fake_boto_client.get_paginator.assert_called_once_with("list_objects_v2")

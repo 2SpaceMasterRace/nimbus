@@ -92,3 +92,47 @@
   - transactions
 
   That one habit will make your reviews much sharper.
+
+```text
+Catch only the failures you understand and intend to translate.
+Let unexpected bugs remain unexpected.
+```
+
+
+When reviewing or writing code, ask these 5 questions:
+
+```text
+1. What is the input?
+2. What is the output?
+3. What resources are created?
+4. What can fail?
+5. Who cleans up?
+```
+
+Applied here:
+
+```text
+Input:
+- bucket_name
+- object_name
+
+Output:
+- downloadable HTTP file response
+
+Resources:
+- temp file
+- storage client
+- HTTP response
+
+Failures:
+- invalid request
+- missing object
+- storage outage
+- local file issue
+- programmer bug
+
+Cleanup:
+- temp file must be deleted
+```
+
+
