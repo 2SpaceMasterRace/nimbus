@@ -10,30 +10,116 @@ authors = [
     { name = "Daniel J. Barros", email = "djb10118@nyu.edu" },
     { name = "Nicholas Maspons", email = "nem8891@nyu.edu" },
 ]
-
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+extend-exclude = [
+    "src/aws_s3_cloud_storage_service_client/aws_s3_cloud_storage_service_client",
+]
 
 [tool.uv.workspace]
 members = [
     "src/cloud_storage_client_api",
     "src/aws_client_impl",
+    "src/aws_client_service",
+    "src/aws_client_adapter",
+    "src/aws_s3_cloud_storage_service_client"
 ]
 
 [tool.uv.sources]
 cloud-storage-client-api = { workspace = true }
 aws-client-impl = { workspace = true }
+aws-client-service = { workspace = true }
+aws-client-adapter = { workspace = true }
+aws-s3-cloud-storage-service-client = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "boto3-stubs>=1.42.54",
+    "coverage>=7.13.4",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
     "ruff>=0.15.0",
-    "ty>=0.0.16",
     "furo>=2025.12.19",
     "myst-parser>=5.0.0",
     "sphinx-autobuild>=2024.10.3",
     "sphinx>=9.1.0",
+    "pytest-httpserver>=1.1.5",
+    "types-requests>=2.33.0.20260327",
+]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "S101",
+    "INP001",
+    "COM812",
+    "D203",
+    "D213",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/test_*.py" = ["S101", "S105"]
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+mypy_path = [
+    "src/aws_client_impl",
+    "src/cloud_storage_client_api",
+    "src/aws_client_service",
+    "src/aws_client_adapter",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "boto3.*",
+    "botocore.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "src/*/tests"]
+addopts = ["--cov", "--cov-report=term-missing", "--import-mode=importlib"]
+markers = [
+    "unit: marks tests as unit tests (fast, isolated)",
+    "integration: marks tests as integration tests (medium speed, real dependencies)",
+    "regression: marks tests that verify previously fixed bugs have not re-emerged or core functionality hasn't degraded",
+    "property: marks property-based tests (using Hypothesis) that generate a wide range of inputs to verify invariant behaviors",
+    "e2e: marks tests as end-to-end tests (slow, full system)",
+    "circleci: marks tests that can run in CI/CD environments without local credentials",
+    "local_credentials: marks tests that require local credentials.json or token.json files",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "*/tests/*",
+    "*/__main__.py",
+    "src/aws_s3_cloud_storage_service_client/aws_s3_cloud_storage_service_client/*",
+]
+
+[tool.coverage.report]
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "src/aws_client_service",
+    "src/aws_client_impl",
+    "src/cloud_storage_client_api",
+    "src/aws_client_adapter",
 ]
