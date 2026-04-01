@@ -35,12 +35,14 @@ members = [
     "src/cloud_storage_client_api",
     "src/aws_client_impl",
     "src/aws_client_service",
+    "src/aws_s3_cloud_storage_service_client"
 ]
 
 [tool.uv.sources]
 cloud-storage-client-api = { workspace = true }
 aws-client-impl = { workspace = true }
 aws-client-service = { workspace = true }
+aws-s3-cloud-storage-service-client = { workspace = true }
 
 [dependency-groups]
 dev = [
