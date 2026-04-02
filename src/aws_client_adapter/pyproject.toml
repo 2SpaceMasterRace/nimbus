@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "cloud-storage-client-api",
     "aws-s3-cloud-storage-service-client",
+    "httpx>=0.23.0",
 ]
 
 [build-system]

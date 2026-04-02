@@ -80,12 +80,14 @@ source = { editable = "src/aws_client_adapter" }
 dependencies = [
     { name = "aws-s3-cloud-storage-service-client" },
     { name = "cloud-storage-client-api" },
+    { name = "httpx" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aws-s3-cloud-storage-service-client", editable = "src/aws_s3_cloud_storage_service_client" },
     { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
+    { name = "httpx", specifier = ">=0.23.0" },
 ]
 
 [[package]]
@@ -94,6 +96,7 @@ version = "0.1.0"
 source = { editable = "src/aws_client_impl" }
 dependencies = [
     { name = "boto3" },
+    { name = "botocore" },
     { name = "cloud-storage-client-api" },
     { name = "requests" },
     { name = "structlog" },
@@ -102,6 +105,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "boto3", specifier = ">=1.42.54" },
+    { name = "botocore", specifier = ">=1.42.54" },
     { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "structlog", specifier = ">=25.5.0" },
@@ -116,6 +120,7 @@ dependencies = [
     { name = "cloud-storage-client-api" },
     { name = "fastapi" },
     { name = "itsdangerous" },
+    { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "starlette" },
@@ -129,6 +134,7 @@ requires-dist = [
     { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
+    { name = "pydantic", specifier = ">=2.11.7" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "starlette", specifier = ">=0.40.0" },
