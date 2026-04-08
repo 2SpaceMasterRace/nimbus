@@ -27,6 +27,12 @@
   [SUB-TODO] Take a crash course on proper API design \
   [SUB-TODO] Look into resilience patterns (retries, rate-limit handling, idempotency)
 
+Datadog, Prometheus, Grafana, OpenTelemetry, Jaeger
+Docker, Kubernetes, Terraform, AWS, GitHub Actions, Buildkite
+
+automated test runnner like tox
+
+
 [NOTES] Code Review
   How To Review This Like A Senior Engineer
 
