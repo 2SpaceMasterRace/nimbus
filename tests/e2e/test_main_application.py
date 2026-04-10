@@ -148,7 +148,7 @@ def test_main_script_imports_work() -> None:
 
     import_test_code = """
 try:
-    import cloud_storage_client_api
+    import cloud_storage_api
     import aws_client_impl
     print("All imports successful")
 except ImportError as e:
@@ -184,8 +184,6 @@ def test_application_structure_integrity() -> None:
     expected_files = [
         "main.py",
         "pyproject.toml",
-        "src/cloud_storage_client_api/cloud_storage_client_api/__init__.py",
-        "src/cloud_storage_client_api/cloud_storage_client_api/client.py",
         "src/aws_client_impl/aws_client_impl/__init__.py",
         "src/aws_client_impl/aws_client_impl/s3_client.py",
     ]

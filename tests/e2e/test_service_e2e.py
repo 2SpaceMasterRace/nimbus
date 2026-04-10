@@ -95,7 +95,7 @@ def test_service_openapi_schema_includes_upload() -> None:
     response_schema = upload_op["responses"]["200"]["content"]["application/json"][
         "schema"
     ]
-    assert response_schema["$ref"].endswith("/OperationResult")
+    assert response_schema["$ref"].endswith("/ObjectInfoResponse")
 
 
 @pytest.mark.circleci
@@ -152,7 +152,7 @@ def test_service_openapi_schema_includes_delete() -> None:
     response_schema = delete_op["responses"]["200"]["content"]["application/json"][
         "schema"
     ]
-    assert response_schema["$ref"].endswith("/OperationResult")
+    assert response_schema["$ref"].endswith("/DeleteResultResponse")
 
 
 @pytest.mark.circleci

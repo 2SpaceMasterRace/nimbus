@@ -92,8 +92,9 @@ def sync_detailed(
 
     Raises:
         HTTPException: 400 if the container or object key is invalid.
-        HTTPException: 404 if the download fails.
-        HTTPException: 502 if the storage backend raises an unexpected error.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the object or container does not exist.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):
@@ -145,8 +146,9 @@ def sync(
 
     Raises:
         HTTPException: 400 if the container or object key is invalid.
-        HTTPException: 404 if the download fails.
-        HTTPException: 502 if the storage backend raises an unexpected error.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the object or container does not exist.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):
@@ -193,8 +195,9 @@ async def asyncio_detailed(
 
     Raises:
         HTTPException: 400 if the container or object key is invalid.
-        HTTPException: 404 if the download fails.
-        HTTPException: 502 if the storage backend raises an unexpected error.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the object or container does not exist.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):
@@ -244,8 +247,9 @@ async def asyncio(
 
     Raises:
         HTTPException: 400 if the container or object key is invalid.
-        HTTPException: 404 if the download fails.
-        HTTPException: 502 if the storage backend raises an unexpected error.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the object or container does not exist.
+        HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):

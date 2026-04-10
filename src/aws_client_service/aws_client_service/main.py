@@ -1,20 +1,26 @@
 """AWS S3 FastAPI service."""
 
+from __future__ import annotations
+
 import os
 import tempfile
+from datetime import (
+    datetime,  # noqa: TC003  # Pydantic models need datetime at runtime for schema generation
+)
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 import structlog
-from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.exceptions import (
+from cloud_storage_api import (
+    AuthenticationError,
+    CloudStorageClient,
+    ContainerNotFoundError,
     InvalidContainerError,
     InvalidFileObjectError,
     InvalidObjectNameError,
     ObjectNotFoundError,
     StorageBackendError,
 )
-from cloud_storage_client_api.factory import get_client
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
 from fastapi import Path as ApiPath
@@ -29,8 +35,7 @@ from aws_client_service.routes.auth import router as auth_router
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
-
-import aws_client_impl  # noqa: E402, F401  # triggers dependency injection after env loading
+from aws_client_impl.s3_client import get_client_impl  # noqa: E402, I001  # env must be loaded before constructing the client
 
 log: Any = structlog.get_logger()
 
@@ -52,26 +57,51 @@ if SPHINX_HTML_DIR.exists():
     )
 
 
-class OperationResult(BaseModel):
-    """JSON response model for operations that return a boolean result."""
+# ---------------------------------------------------------------------------
+# Response models
+# ---------------------------------------------------------------------------
 
-    ok: bool
+
+class ObjectInfoResponse(BaseModel):
+    """JSON response model for object metadata."""
+
+    object_name: str
+    version_id: str | None = None
+    data_type: str | None = None
+    integrity: str | None = None
+    encryption: str | None = None
+    storage_tier: str | None = None
+    size_bytes: int | None = None
+    updated_at: datetime | None = None
+    metadata: dict[str, str] | None = None
 
 
-class ListFilesResponse(BaseModel):
-    """JSON response model for listing files within a container."""
+class DeleteResultResponse(BaseModel):
+    """JSON response model for delete operations."""
 
-    files: list[str]
+    deleted: bool
+    version_id: str | None = None
+    request_charged: bool | None = None
+
+
+# ---------------------------------------------------------------------------
+# Dependencies
+# ---------------------------------------------------------------------------
 
 
 def get_storage_client() -> CloudStorageClient:
     """Dependency that provides a CloudStorageClient instance."""
-    return get_client()
+    return get_client_impl()
 
 
 def remove_temp_file(path: str) -> None:
     """Best-effort cleanup for a temporary file created for download responses."""
     Path(path).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# Endpoints
+# ---------------------------------------------------------------------------
 
 
 @app.get("/health")
@@ -93,7 +123,7 @@ def upload_object(
     file: UploadFile,
     _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
-) -> OperationResult:
+) -> ObjectInfoResponse:
     """Upload an object to a bucket (container).
 
     Args:
@@ -103,21 +133,27 @@ def upload_object(
         client: Injected cloud storage client.
 
     Returns:
-        OperationResult with ok=True on success.
+        Metadata describing the uploaded object.
 
     Raises:
-        HTTPException: 502 if the storage backend raises an exception.
-        HTTPException: 400 if the key is invalid (empty or leading slash).
+        HTTPException: 400 if the key or container is invalid.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the container does not exist.
+        HTTPException: 502 if the storage backend fails.
 
     """
     try:
-        client.upload_obj(container, file.file, object_name)
+        info = client.upload_obj(container, file.file, object_name)
     except (
         InvalidContainerError,
         InvalidFileObjectError,
         InvalidObjectNameError,
     ) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ContainerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     except StorageBackendError as exc:
         log.exception(
             "Upload failed",
@@ -128,7 +164,17 @@ def upload_object(
             status_code=502,
             detail="Upload failed due to a storage error",
         ) from exc
-    return OperationResult(ok=True)
+    return ObjectInfoResponse(
+        object_name=info.object_name,
+        version_id=info.version_id,
+        data_type=info.data_type,
+        integrity=info.integrity,
+        encryption=info.encryption,
+        storage_tier=info.storage_tier,
+        size_bytes=info.size_bytes,
+        updated_at=info.updated_at,
+        metadata=dict(info.metadata) if info.metadata else None,
+    )
 
 
 @app.get("/download", response_class=FileResponse)
@@ -150,8 +196,9 @@ def download_file(
 
     Raises:
         HTTPException: 400 if the container or object key is invalid.
-        HTTPException: 404 if the download fails.
-        HTTPException: 502 if the storage backend raises an unexpected error.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the object or container does not exist.
+        HTTPException: 502 if the storage backend fails.
 
     """
     suffix = PurePosixPath(object_name).suffix or ".bin"
@@ -163,17 +210,16 @@ def download_file(
     tmp_path = tmp.name
 
     try:
-        success = client.download_file(
-            container,
-            object_name,
-            tmp_path,
-        )
+        client.download_file(container, object_name, tmp_path)
     except (InvalidContainerError, InvalidObjectNameError) as exc:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ObjectNotFoundError as exc:
+    except (ObjectNotFoundError, ContainerNotFoundError) as exc:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     except StorageBackendError as exc:
         Path(tmp_path).unlink(missing_ok=True)
         log.exception(
@@ -185,12 +231,6 @@ def download_file(
             status_code=502,
             detail="Download failed due to a storage error",
         ) from exc
-
-    if not success:  # pragma: no cover
-        Path(tmp_path).unlink(missing_ok=True)  # pragma: no cover
-        raise HTTPException(
-            status_code=404, detail="Download failed"
-        )  # pragma: no cover
 
     return FileResponse(
         path=tmp_path,
@@ -205,7 +245,7 @@ def delete_object(
     object_name: Annotated[str, ApiPath(min_length=1, max_length=1024)],
     _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
-) -> OperationResult:
+) -> DeleteResultResponse:
     """Delete an object from a bucket (container).
 
     Args:
@@ -214,20 +254,23 @@ def delete_object(
         client: Injected cloud storage client.
 
     Returns:
-        OperationResult with ok=True on success.
+        Deletion metadata.
 
     Raises:
         HTTPException: 400 if the container or object key is invalid.
-        HTTPException: 502 if the storage backend raises an exception.
-        HTTPException: 404 if the object does not exist.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the object or container does not exist.
+        HTTPException: 502 if the storage backend fails.
 
     """
     try:
-        ok = client.delete_file(container, object_name)
+        result = client.delete_file(container, object_name)
     except (InvalidContainerError, InvalidObjectNameError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ObjectNotFoundError as exc:
+    except (ObjectNotFoundError, ContainerNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     except StorageBackendError as exc:
         log.exception(
             "Delete failed",
@@ -239,10 +282,11 @@ def delete_object(
             detail="Delete failed due to a storage error",
         ) from exc
 
-    if not ok:  # pragma: no cover
-        raise HTTPException(status_code=404, detail="Delete failed")  # pragma: no cover
-
-    return OperationResult(ok=True)
+    return DeleteResultResponse(
+        deleted=result["deleted"],
+        version_id=result.get("version_id"),
+        request_charged=result.get("request_charged"),
+    )
 
 
 @app.get("/files")
@@ -251,7 +295,7 @@ def list_files(
     _: Annotated[str, Depends(require_oauth_session)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
     prefix: Annotated[str, Query(max_length=1024)] = "",
-) -> ListFilesResponse:
+) -> list[ObjectInfoResponse]:
     """List files that match a given prefix.
 
     Args:
@@ -260,17 +304,23 @@ def list_files(
         client: Injected cloud storage client.
 
     Returns:
-        A JSON object containing matching file keys.
+        A list of object metadata entries.
 
     Raises:
         HTTPException: 400 if the container name is invalid.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the container does not exist.
         HTTPException: 502 if the storage backend fails.
 
     """
     try:
-        files = client.list_files(container, prefix)
+        items = client.list_files(container, prefix)
     except InvalidContainerError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ContainerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
     except StorageBackendError as exc:
         log.exception("List files failed", container=container, prefix=prefix)
         raise HTTPException(
@@ -278,4 +328,73 @@ def list_files(
             detail="List files failed due to a storage error",
         ) from exc
 
-    return ListFilesResponse(files=files)
+    return [
+        ObjectInfoResponse(
+            object_name=info.object_name,
+            version_id=info.version_id,
+            data_type=info.data_type,
+            integrity=info.integrity,
+            encryption=info.encryption,
+            storage_tier=info.storage_tier,
+            size_bytes=info.size_bytes,
+            updated_at=info.updated_at,
+            metadata=dict(info.metadata) if info.metadata else None,
+        )
+        for info in items
+    ]
+
+
+@app.get("/files/{container}/{object_name:path}/info")
+def get_file_info(
+    container: Annotated[str, ApiPath(min_length=3, max_length=63)],
+    object_name: Annotated[str, ApiPath(min_length=1, max_length=1024)],
+    _: Annotated[str, Depends(require_oauth_session)],
+    client: Annotated[CloudStorageClient, Depends(get_storage_client)],
+) -> ObjectInfoResponse:
+    """Return metadata for a single stored object.
+
+    Args:
+        container: The name of the bucket containing the object.
+        object_name: The key of the object to inspect.
+        client: Injected cloud storage client.
+
+    Returns:
+        Object metadata.
+
+    Raises:
+        HTTPException: 400 if the container or object key is invalid.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the object or container does not exist.
+        HTTPException: 502 if the storage backend fails.
+
+    """
+    try:
+        info = client.get_file_info(container, object_name)
+    except (InvalidContainerError, InvalidObjectNameError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (ObjectNotFoundError, ContainerNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except AuthenticationError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except StorageBackendError as exc:
+        log.exception(
+            "Get file info failed",
+            container=container,
+            object_name=object_name,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Get file info failed due to a storage error",
+        ) from exc
+
+    return ObjectInfoResponse(
+        object_name=info.object_name,
+        version_id=info.version_id,
+        data_type=info.data_type,
+        integrity=info.integrity,
+        encryption=info.encryption,
+        storage_tier=info.storage_tier,
+        size_bytes=info.size_bytes,
+        updated_at=info.updated_at,
+        metadata=dict(info.metadata) if info.metadata else None,
+    )

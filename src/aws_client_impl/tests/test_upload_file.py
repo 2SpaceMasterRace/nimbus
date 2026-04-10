@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
-from cloud_storage_client_api.exceptions import StorageBackendError
+from cloud_storage_api import LocalFileAccessError, ObjectInfo, StorageBackendError
 
 from aws_client_impl import s3_client as s3_mod
 
@@ -21,22 +21,27 @@ def _client_error() -> ClientError:
     )
 
 
+def _stub_object_info(key: str = "ok/key") -> ObjectInfo:
+    """Return a minimal ObjectInfo for use in test stubs."""
+    return ObjectInfo(object_name=key)
+
+
 def test_upload_file_raises_value_error_on_empty_key(mocker: "MockerFixture") -> None:  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
-    """Test upload_file raises ValueError when key is empty."""
+    """Test upload_file raises ValueError when remote_path is empty."""
     c = S3Client()
 
     with pytest.raises(ValueError, match="Key cannot be empty"):
-        c.upload_file(container="my-bucket", local_path="local.txt", key="")
+        c.upload_file(container="my-bucket", local_path="local.txt", remote_path="")
 
 
 def test_upload_file_raises_value_error_on_leading_slash(
     mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
-    """Test upload_file raises ValueError when key starts with '/'."""
+    """Test upload_file raises ValueError when remote_path starts with '/'."""
     c = S3Client()
 
     with pytest.raises(ValueError, match="leading slash"):
-        c.upload_file(container="my-bucket", local_path="local.txt", key="/bad")
+        c.upload_file(container="my-bucket", local_path="local.txt", remote_path="/bad")
 
 
 def test_upload_file_calls_singlepart_upload_when_small(
@@ -48,15 +53,20 @@ def test_upload_file_calls_singlepart_upload_when_small(
     fake_session.client.return_value = fake_client
     mocker.patch.object(S3Client, "_get_session", return_value=fake_session)
 
-    # force file size below threshold
     fake_stat = mocker.Mock()
     fake_stat.st_size = s3_mod.MULTIPART_THRESHOLD - 1
     mocker.patch("aws_client_impl.s3_client.Path.stat", return_value=fake_stat)
 
-    c = S3Client()
-    ok = c.upload_file(container="my-bucket", local_path="local.txt", key="ok/key")
+    expected = _stub_object_info("ok/key")
+    mocker.patch.object(S3Client, "_head_object_info", return_value=expected)
 
-    assert ok is True
+    c = S3Client()
+    result = c.upload_file(
+        container="my-bucket", local_path="local.txt", remote_path="ok/key"
+    )
+
+    assert isinstance(result, ObjectInfo)
+    assert result.object_name == "ok/key"
     fake_client.upload_file.assert_called_once_with("local.txt", "my-bucket", "ok/key")
 
 
@@ -74,17 +84,21 @@ def test_upload_file_calls_multipart_upload_when_large(
     mocker.patch("aws_client_impl.s3_client.Path.stat", return_value=fake_stat)
 
     c = S3Client()
-    mp = mocker.patch.object(c, "_multipart_upload_file", return_value=True)
+    expected = _stub_object_info("big/key")
+    mp = mocker.patch.object(c, "_multipart_upload_file", return_value=expected)
 
-    ok = c.upload_file(container="my-bucket", local_path="big.bin", key="big/key")
+    result = c.upload_file(
+        container="my-bucket", local_path="big.bin", remote_path="big/key"
+    )
 
-    assert ok is True
+    assert isinstance(result, ObjectInfo)
+    assert result.object_name == "big/key"
     mp.assert_called_once_with("my-bucket", "big.bin", "big/key")
     fake_client.upload_file.assert_not_called()
 
 
-def test_upload_file_raises_file_not_found_error(mocker: "MockerFixture") -> None:
-    """Test upload_file raises FileNotFoundError when local file is missing."""
+def test_upload_file_raises_local_file_access_error(mocker: "MockerFixture") -> None:
+    """Test upload_file raises LocalFileAccessError when local file is missing."""
     fake_session = mocker.Mock()
     fake_client = mocker.Mock()
     fake_session.client.return_value = fake_client
@@ -97,8 +111,8 @@ def test_upload_file_raises_file_not_found_error(mocker: "MockerFixture") -> Non
 
     c = S3Client()
 
-    with pytest.raises(FileNotFoundError):
-        c.upload_file(container="my-bucket", local_path="missing.bin", key="k")
+    with pytest.raises(LocalFileAccessError):
+        c.upload_file(container="my-bucket", local_path="missing.bin", remote_path="k")
 
 
 def test_upload_file_raises_client_error_on_upload_failure(
@@ -118,6 +132,8 @@ def test_upload_file_raises_client_error_on_upload_failure(
     c = S3Client()
 
     with pytest.raises(StorageBackendError):
-        c.upload_file(container="my-bucket", local_path="local.txt", key="ok/key")
+        c.upload_file(
+            container="my-bucket", local_path="local.txt", remote_path="ok/key"
+        )
 
     fake_client.upload_file.assert_called_once()

@@ -7,8 +7,9 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
-from cloud_storage_client_api.exceptions import (
+from cloud_storage_api import (
     InvalidObjectNameError,
+    ObjectInfo,
     StorageBackendError,
 )
 from fastapi.testclient import TestClient
@@ -39,6 +40,11 @@ def mock_storage_client() -> MagicMock:
     return mock_client
 
 
+def _stub_object_info(name: str = "photo.jpg") -> ObjectInfo:
+    """Return a minimal ObjectInfo for use in test stubs."""
+    return ObjectInfo(object_name=name)
+
+
 @pytest.mark.circleci
 def test_health_returns_ok(client: TestClient) -> None:
     """GET /health returns 200 with status ok."""
@@ -62,8 +68,8 @@ def test_upload_returns_ok_on_success(
     client: TestClient,
     mock_storage_client: MagicMock,
 ) -> None:
-    """POST returns 200 with ok = on success."""
-    mock_storage_client.upload_obj.return_value = True
+    """POST returns 200 with object_name on success."""
+    mock_storage_client.upload_obj.return_value = _stub_object_info("photo.jpg")
 
     response = client.post(
         "/files/my-bucket/photo.jpg",
@@ -71,7 +77,8 @@ def test_upload_returns_ok_on_success(
     )
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"ok": True}
+    body = response.json()
+    assert body["object_name"] == "photo.jpg"
 
 
 @pytest.mark.circleci
@@ -116,7 +123,7 @@ def test_upload_calls_client_with_correct_args(
     mock_storage_client: MagicMock,
 ) -> None:
     """POST /files/{container}/{object_name} passes correct key to upload_object."""
-    mock_storage_client.upload_obj.return_value = True
+    mock_storage_client.upload_obj.return_value = _stub_object_info("photo.jpg")
 
     client.post(
         "/files/my-bucket/photo.jpg",
@@ -134,7 +141,9 @@ def test_upload_nested_key(
     mock_storage_client: MagicMock,
 ) -> None:
     """POST endpoint handles nested S3 keys with slashes."""
-    mock_storage_client.upload_obj.return_value = True
+    mock_storage_client.upload_obj.return_value = _stub_object_info(
+        "folder/sub/photo.jpg"
+    )
 
     response = client.post(
         "/files/my-bucket/folder/sub/photo.jpg",
@@ -142,7 +151,8 @@ def test_upload_nested_key(
     )
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"ok": True}
+    body = response.json()
+    assert body["object_name"] == "folder/sub/photo.jpg"
     args, _kwargs = mock_storage_client.upload_obj.call_args
     assert args[0] == "my-bucket"
     assert args[2] == "folder/sub/photo.jpg"

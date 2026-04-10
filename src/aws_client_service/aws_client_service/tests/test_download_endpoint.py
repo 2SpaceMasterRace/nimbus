@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
-from cloud_storage_client_api.exceptions import ObjectNotFoundError, StorageBackendError
+from cloud_storage_api import ObjectInfo, ObjectNotFoundError, StorageBackendError
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -39,6 +39,11 @@ def mock_storage_client() -> MagicMock:
     return mock_client
 
 
+def _stub_object_info(name: str = "report.csv") -> ObjectInfo:
+    """Return a minimal ObjectInfo for use in test stubs."""
+    return ObjectInfo(object_name=name)
+
+
 @pytest.mark.circleci
 def test_health_returns_ok(client: TestClient) -> None:
     """GET /health returns 200 with status ok."""
@@ -64,9 +69,9 @@ def test_download_returns_file_on_success(
 ) -> None:
     """GET /download returns the file content when download_file succeeds."""
 
-    def fake_download(_bucket: str, _key: str, dest: str) -> bool:
+    def fake_download(_bucket: str, _key: str, dest: str) -> ObjectInfo:
         Path(dest).write_bytes(b"file content")
-        return True
+        return _stub_object_info(_key)
 
     mock_storage_client.download_file.side_effect = fake_download
 
@@ -145,9 +150,9 @@ def test_download_sets_filename_header(
 ) -> None:
     """GET /download sets Content-Disposition header with the object filename."""
 
-    def fake_download(_bucket: str, _key: str, dest: str) -> bool:
+    def fake_download(_bucket: str, _key: str, dest: str) -> ObjectInfo:
         Path(dest).write_bytes(b"data")
-        return True
+        return _stub_object_info(_key)
 
     mock_storage_client.download_file.side_effect = fake_download
 
@@ -170,10 +175,10 @@ def test_download_removes_temp_file_after_successful_response(
     """GET /download removes the temp file after FileResponse finishes sending."""
     captured_dest: dict[str, str] = {}
 
-    def fake_download(_bucket: str, _key: str, dest: str) -> bool:
+    def fake_download(_bucket: str, _key: str, dest: str) -> ObjectInfo:
         captured_dest["path"] = dest
         Path(dest).write_bytes(b"cleanup me")
-        return True
+        return _stub_object_info(_key)
 
     mock_storage_client.download_file.side_effect = fake_download
 

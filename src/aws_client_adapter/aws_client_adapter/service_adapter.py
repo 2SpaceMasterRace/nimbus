@@ -17,20 +17,29 @@ from aws_s3_cloud_storage_service_client.api.default import (
     download_file_download_get as download_file_api,
 )
 from aws_s3_cloud_storage_service_client.api.default import (
+    get_file_info_files_container_object_name_info_get as get_file_info_api,
+)
+from aws_s3_cloud_storage_service_client.api.default import (
     list_files_files_get as list_files_api,
 )
 from aws_s3_cloud_storage_service_client.api.default import (
     upload_object_files_container_object_name_post as upload_object_api,
 )
-from aws_s3_cloud_storage_service_client.models.list_files_response import (
-    ListFilesResponse,
+from aws_s3_cloud_storage_service_client.models.delete_result_response import (
+    DeleteResultResponse,
 )
-from aws_s3_cloud_storage_service_client.models.operation_result import OperationResult
-from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.exceptions import (
+from aws_s3_cloud_storage_service_client.models.object_info_response import (
+    ObjectInfoResponse,
+)
+from aws_s3_cloud_storage_service_client.types import Unset
+from cloud_storage_api import (
+    CloudStorageClient,
+    DeleteResult,
     InvalidContainerError,
     InvalidFileObjectError,
     InvalidObjectNameError,
+    LocalFileAccessError,
+    ObjectInfo,
     ObjectNotFoundError,
     StorageBackendError,
 )
@@ -63,6 +72,41 @@ class _MultipartUploadBody:
         return [("file", (self._file_name, self._file_obj, self._mime_type))]
 
 
+def _or_none(value: object) -> object:
+    """Convert generated-client ``Unset`` sentinels to ``None``."""
+    if isinstance(value, Unset):
+        return None
+    return value
+
+
+def _response_to_object_info(resp: ObjectInfoResponse) -> ObjectInfo:
+    """Map a generated ``ObjectInfoResponse`` to a domain ``ObjectInfo``."""
+    raw_metadata = _or_none(resp.metadata)
+    metadata: dict[str, str] | None = None
+    if raw_metadata is not None:
+        metadata = dict(raw_metadata.additional_properties)
+    return ObjectInfo(
+        object_name=resp.object_name,
+        version_id=_or_none(resp.version_id),
+        data_type=_or_none(resp.data_type),
+        integrity=_or_none(resp.integrity),
+        encryption=_or_none(resp.encryption),
+        storage_tier=_or_none(resp.storage_tier),
+        size_bytes=_or_none(resp.size_bytes),
+        updated_at=_or_none(resp.updated_at),
+        metadata=metadata,
+    )
+
+
+def _response_to_delete_result(resp: DeleteResultResponse) -> DeleteResult:
+    """Map a generated ``DeleteResultResponse`` to a domain ``DeleteResult``."""
+    return DeleteResult(
+        deleted=resp.deleted,
+        version_id=_or_none(resp.version_id),
+        request_charged=_or_none(resp.request_charged),
+    )
+
+
 class CloudStorageServiceAdapter(CloudStorageClient):
     """Route cloud storage operations through the generated HTTP client."""
 
@@ -70,12 +114,20 @@ class CloudStorageServiceAdapter(CloudStorageClient):
         """Initialize the adapter with a generated service client instance."""
         self._service_client = service_client
 
-    def upload_file(self, container: str, local_path: str, remote_path: str) -> bool:
+    def upload_file(
+        self, container: str, local_path: str, remote_path: str
+    ) -> ObjectInfo:
         """Upload a local file to the remote service."""
-        with Path(local_path).open("rb") as file_obj:
-            return self.upload_obj(container, file_obj, remote_path)
+        try:
+            with Path(local_path).open("rb") as file_obj:
+                return self.upload_obj(container, file_obj, remote_path)
+        except (FileNotFoundError, OSError) as exc:
+            msg = f"Cannot read local file '{local_path}'"
+            raise LocalFileAccessError(msg) from exc
 
-    def upload_obj(self, container: str, file_obj: BinaryIO, remote_path: str) -> bool:
+    def upload_obj(
+        self, container: str, file_obj: BinaryIO, remote_path: str
+    ) -> ObjectInfo:
         """Upload a binary file-like object through the service."""
         self._validate_container_name(container)
         self._validate_object_name(remote_path)
@@ -107,14 +159,16 @@ class CloudStorageServiceAdapter(CloudStorageClient):
             raise StorageBackendError(msg) from exc
 
         if response.status_code == HTTPStatus.OK and isinstance(
-            response.parsed, OperationResult
+            response.parsed, ObjectInfoResponse
         ):
-            return response.parsed.ok
+            return _response_to_object_info(response.parsed)
 
         self._raise_for_response(response)
         raise AssertionError(UNREACHABLE_MSG)
 
-    def download_file(self, container: str, object_name: str, file_name: str) -> bool:
+    def download_file(
+        self, container: str, object_name: str, file_name: str
+    ) -> ObjectInfo:
         """Download an object through the service and write it locally."""
         self._validate_container_name(container)
         self._validate_object_name(object_name)
@@ -130,13 +184,17 @@ class CloudStorageServiceAdapter(CloudStorageClient):
             raise StorageBackendError(msg) from exc
 
         if response.status_code == HTTPStatus.OK:
-            Path(file_name).write_bytes(response.content)
-            return True
+            try:
+                Path(file_name).write_bytes(response.content)
+            except OSError as exc:
+                msg = f"Cannot write to local path '{file_name}'"
+                raise LocalFileAccessError(msg) from exc
+            return self.get_file_info(container, object_name)
 
         self._raise_for_response(response)
         raise AssertionError(UNREACHABLE_MSG)
 
-    def list_files(self, container: str, prefix: str = "") -> list[str]:
+    def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
         """List files in a remote container through the service."""
         self._validate_container_name(container)
 
@@ -150,15 +208,16 @@ class CloudStorageServiceAdapter(CloudStorageClient):
             msg = "List files failed due to a transport error"
             raise StorageBackendError(msg) from exc
 
-        if response.status_code == HTTPStatus.OK and isinstance(
-            response.parsed, ListFilesResponse
-        ):
-            return response.parsed.files
+        if response.status_code == HTTPStatus.OK and isinstance(response.parsed, list):
+            return sorted(
+                [_response_to_object_info(item) for item in response.parsed],
+                key=lambda info: info.object_name,
+            )
 
         self._raise_for_response(response)
         raise AssertionError(UNREACHABLE_MSG)
 
-    def delete_file(self, container: str, object_name: str) -> bool:
+    def delete_file(self, container: str, object_name: str) -> DeleteResult:
         """Delete an object through the remote service."""
         self._validate_container_name(container)
         self._validate_object_name(object_name)
@@ -174,9 +233,32 @@ class CloudStorageServiceAdapter(CloudStorageClient):
             raise StorageBackendError(msg) from exc
 
         if response.status_code == HTTPStatus.OK and isinstance(
-            response.parsed, OperationResult
+            response.parsed, DeleteResultResponse
         ):
-            return response.parsed.ok
+            return _response_to_delete_result(response.parsed)
+
+        self._raise_for_response(response)
+        raise AssertionError(UNREACHABLE_MSG)
+
+    def get_file_info(self, container: str, object_name: str) -> ObjectInfo:
+        """Return metadata for a single stored object."""
+        self._validate_container_name(container)
+        self._validate_object_name(object_name)
+
+        try:
+            response = get_file_info_api.sync_detailed(
+                container=container,
+                object_name=object_name,
+                client=self._service_client,
+            )
+        except httpx.HTTPError as exc:
+            msg = "Get file info failed due to a transport error"
+            raise StorageBackendError(msg) from exc
+
+        if response.status_code == HTTPStatus.OK and isinstance(
+            response.parsed, ObjectInfoResponse
+        ):
+            return _response_to_object_info(response.parsed)
 
         self._raise_for_response(response)
         raise AssertionError(UNREACHABLE_MSG)

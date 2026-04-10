@@ -10,23 +10,21 @@ import os
 from typing import Any
 
 import structlog
-from cloud_storage_client_api.factory import get_client
-
-import aws_client_impl  # noqa: F401  # triggers dependency injection
+from aws_client_impl.s3_client import get_client_impl
 
 log: Any = structlog.get_logger()
 
 
 def main() -> None:
     """Create a cloud storage client and demonstrate S3 operations."""
-    client = get_client()
+    client = get_client_impl()
     container = os.environ["AWS_BUCKET_NAME"]
     log.info("Created cloud storage client")
 
     files = client.list_files(container, "")
     log.info("Listed files in bucket", container=container, count=len(files))
-    for key in files[:10]:
-        log.info("Found file", key=key)
+    for info in files[:10]:
+        log.info("Found file", key=info.object_name)
 
     log.info("Demo complete")
 

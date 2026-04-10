@@ -1,5 +1,6 @@
 from http import HTTPStatus
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -11,9 +12,9 @@ from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
-    *,
     container: str,
-    prefix: str | Unset = "",
+    object_name: str,
+    *,
     x_api_key: None | str | Unset = UNSET,
     authorization: None | str | Unset = UNSET,
 ) -> dict[str, Any]:
@@ -24,18 +25,12 @@ def _get_kwargs(
     if not isinstance(authorization, Unset):
         headers["authorization"] = authorization
 
-    params: dict[str, Any] = {}
-
-    params["container"] = container
-
-    params["prefix"] = prefix
-
-    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
-
     _kwargs: dict[str, Any] = {
         "method": "get",
-        "url": "/files",
-        "params": params,
+        "url": "/files/{container}/{object_name}/info".format(
+            container=quote(str(container), safe=""),
+            object_name=quote(str(object_name), safe=""),
+        ),
     }
 
     _kwargs["headers"] = headers
@@ -44,14 +39,9 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> HTTPValidationError | list[ObjectInfoResponse] | None:
+) -> HTTPValidationError | ObjectInfoResponse | None:
     if response.status_code == 200:
-        response_200 = []
-        _response_200 = response.json()
-        for response_200_item_data in _response_200:
-            response_200_item = ObjectInfoResponse.from_dict(response_200_item_data)
-
-            response_200.append(response_200_item)
+        response_200 = ObjectInfoResponse.from_dict(response.json())
 
         return response_200
 
@@ -68,7 +58,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[HTTPValidationError | list[ObjectInfoResponse]]:
+) -> Response[HTTPValidationError | ObjectInfoResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -78,34 +68,34 @@ def _build_response(
 
 
 def sync_detailed(
+    container: str,
+    object_name: str,
     *,
     client: AuthenticatedClient | Client,
-    container: str,
-    prefix: str | Unset = "",
     x_api_key: None | str | Unset = UNSET,
     authorization: None | str | Unset = UNSET,
-) -> Response[HTTPValidationError | list[ObjectInfoResponse]]:
-    """List Files
+) -> Response[HTTPValidationError | ObjectInfoResponse]:
+    """Get File Info
 
-     List files that match a given prefix.
+     Return metadata for a single stored object.
 
     Args:
-        container: Container used to scope the listing operation.
-        prefix: Prefix used to filter objects.
+        container: The name of the bucket containing the object.
+        object_name: The key of the object to inspect.
         client: Injected cloud storage client.
 
     Returns:
-        A list of object metadata entries.
+        Object metadata.
 
     Raises:
-        HTTPException: 400 if the container name is invalid.
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 401 if credentials are rejected.
-        HTTPException: 404 if the container does not exist.
+        HTTPException: 404 if the object or container does not exist.
         HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):
-        prefix (str | Unset):  Default: ''.
+        object_name (str):
         x_api_key (None | str | Unset):
         authorization (None | str | Unset):
 
@@ -114,12 +104,12 @@ def sync_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[HTTPValidationError | list[ObjectInfoResponse]]
+        Response[HTTPValidationError | ObjectInfoResponse]
     """
 
     kwargs = _get_kwargs(
         container=container,
-        prefix=prefix,
+        object_name=object_name,
         x_api_key=x_api_key,
         authorization=authorization,
     )
@@ -132,34 +122,34 @@ def sync_detailed(
 
 
 def sync(
+    container: str,
+    object_name: str,
     *,
     client: AuthenticatedClient | Client,
-    container: str,
-    prefix: str | Unset = "",
     x_api_key: None | str | Unset = UNSET,
     authorization: None | str | Unset = UNSET,
-) -> HTTPValidationError | list[ObjectInfoResponse] | None:
-    """List Files
+) -> HTTPValidationError | ObjectInfoResponse | None:
+    """Get File Info
 
-     List files that match a given prefix.
+     Return metadata for a single stored object.
 
     Args:
-        container: Container used to scope the listing operation.
-        prefix: Prefix used to filter objects.
+        container: The name of the bucket containing the object.
+        object_name: The key of the object to inspect.
         client: Injected cloud storage client.
 
     Returns:
-        A list of object metadata entries.
+        Object metadata.
 
     Raises:
-        HTTPException: 400 if the container name is invalid.
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 401 if credentials are rejected.
-        HTTPException: 404 if the container does not exist.
+        HTTPException: 404 if the object or container does not exist.
         HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):
-        prefix (str | Unset):  Default: ''.
+        object_name (str):
         x_api_key (None | str | Unset):
         authorization (None | str | Unset):
 
@@ -168,47 +158,47 @@ def sync(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        HTTPValidationError | list[ObjectInfoResponse]
+        HTTPValidationError | ObjectInfoResponse
     """
 
     return sync_detailed(
-        client=client,
         container=container,
-        prefix=prefix,
+        object_name=object_name,
+        client=client,
         x_api_key=x_api_key,
         authorization=authorization,
     ).parsed
 
 
 async def asyncio_detailed(
+    container: str,
+    object_name: str,
     *,
     client: AuthenticatedClient | Client,
-    container: str,
-    prefix: str | Unset = "",
     x_api_key: None | str | Unset = UNSET,
     authorization: None | str | Unset = UNSET,
-) -> Response[HTTPValidationError | list[ObjectInfoResponse]]:
-    """List Files
+) -> Response[HTTPValidationError | ObjectInfoResponse]:
+    """Get File Info
 
-     List files that match a given prefix.
+     Return metadata for a single stored object.
 
     Args:
-        container: Container used to scope the listing operation.
-        prefix: Prefix used to filter objects.
+        container: The name of the bucket containing the object.
+        object_name: The key of the object to inspect.
         client: Injected cloud storage client.
 
     Returns:
-        A list of object metadata entries.
+        Object metadata.
 
     Raises:
-        HTTPException: 400 if the container name is invalid.
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 401 if credentials are rejected.
-        HTTPException: 404 if the container does not exist.
+        HTTPException: 404 if the object or container does not exist.
         HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):
-        prefix (str | Unset):  Default: ''.
+        object_name (str):
         x_api_key (None | str | Unset):
         authorization (None | str | Unset):
 
@@ -217,12 +207,12 @@ async def asyncio_detailed(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[HTTPValidationError | list[ObjectInfoResponse]]
+        Response[HTTPValidationError | ObjectInfoResponse]
     """
 
     kwargs = _get_kwargs(
         container=container,
-        prefix=prefix,
+        object_name=object_name,
         x_api_key=x_api_key,
         authorization=authorization,
     )
@@ -233,34 +223,34 @@ async def asyncio_detailed(
 
 
 async def asyncio(
+    container: str,
+    object_name: str,
     *,
     client: AuthenticatedClient | Client,
-    container: str,
-    prefix: str | Unset = "",
     x_api_key: None | str | Unset = UNSET,
     authorization: None | str | Unset = UNSET,
-) -> HTTPValidationError | list[ObjectInfoResponse] | None:
-    """List Files
+) -> HTTPValidationError | ObjectInfoResponse | None:
+    """Get File Info
 
-     List files that match a given prefix.
+     Return metadata for a single stored object.
 
     Args:
-        container: Container used to scope the listing operation.
-        prefix: Prefix used to filter objects.
+        container: The name of the bucket containing the object.
+        object_name: The key of the object to inspect.
         client: Injected cloud storage client.
 
     Returns:
-        A list of object metadata entries.
+        Object metadata.
 
     Raises:
-        HTTPException: 400 if the container name is invalid.
+        HTTPException: 400 if the container or object key is invalid.
         HTTPException: 401 if credentials are rejected.
-        HTTPException: 404 if the container does not exist.
+        HTTPException: 404 if the object or container does not exist.
         HTTPException: 502 if the storage backend fails.
 
     Args:
         container (str):
-        prefix (str | Unset):  Default: ''.
+        object_name (str):
         x_api_key (None | str | Unset):
         authorization (None | str | Unset):
 
@@ -269,14 +259,14 @@ async def asyncio(
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        HTTPValidationError | list[ObjectInfoResponse]
+        HTTPValidationError | ObjectInfoResponse
     """
 
     return (
         await asyncio_detailed(
-            client=client,
             container=container,
-            prefix=prefix,
+            object_name=object_name,
+            client=client,
             x_api_key=x_api_key,
             authorization=authorization,
         )

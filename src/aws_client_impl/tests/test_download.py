@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
-from cloud_storage_client_api.exceptions import ObjectNotFoundError
+from cloud_storage_api import ObjectInfo, ObjectNotFoundError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -17,6 +17,11 @@ def _client_error(op: str = "DownloadFile") -> ClientError:
         error_response={"Error": {"Code": "500", "Message": "boom"}},
         operation_name=op,
     )
+
+
+def _stub_object_info(key: str = "my-key") -> ObjectInfo:
+    """Return a minimal ObjectInfo for use in test stubs."""
+    return ObjectInfo(object_name=key)
 
 
 def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
@@ -36,14 +41,18 @@ def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
     return S3Client()
 
 
-def test_download_file_returns_true_on_success(mocker: "MockerFixture") -> None:
-    """Test download_file returns True on success."""
+def test_download_file_returns_object_info_on_success(mocker: "MockerFixture") -> None:
+    """Test download_file returns ObjectInfo on success."""
     fake_boto_client = mocker.Mock()
     c = _make_client(mocker, fake_boto_client)
 
-    ok = c.download_file("my-bucket", "my-key", "local.txt")
+    expected = _stub_object_info("my-key")
+    mocker.patch.object(S3Client, "_head_object_info", return_value=expected)
 
-    assert ok is True
+    result = c.download_file("my-bucket", "my-key", "local.txt")
+
+    assert isinstance(result, ObjectInfo)
+    assert result.object_name == "my-key"
     fake_boto_client.download_file.assert_called_once_with(
         "my-bucket", "my-key", "local.txt"
     )

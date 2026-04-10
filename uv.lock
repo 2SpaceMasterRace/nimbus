@@ -8,7 +8,6 @@ members = [
     "aws-client-impl",
     "aws-client-service",
     "aws-s3-cloud-storage-service-client",
-    "cloud-storage-client-api",
     "ospsd-team-2",
 ]
 
@@ -79,14 +78,14 @@ version = "0.1.0"
 source = { editable = "src/aws_client_adapter" }
 dependencies = [
     { name = "aws-s3-cloud-storage-service-client" },
-    { name = "cloud-storage-client-api" },
+    { name = "cloud-storage-api" },
     { name = "httpx" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aws-s3-cloud-storage-service-client", editable = "src/aws_s3_cloud_storage_service_client" },
-    { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
+    { name = "cloud-storage-api", git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git?rev=v1.0.0" },
     { name = "httpx", specifier = ">=0.23.0" },
 ]
 
@@ -97,7 +96,7 @@ source = { editable = "src/aws_client_impl" }
 dependencies = [
     { name = "boto3" },
     { name = "botocore" },
-    { name = "cloud-storage-client-api" },
+    { name = "cloud-storage-api" },
     { name = "requests" },
     { name = "structlog" },
 ]
@@ -106,7 +105,7 @@ dependencies = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.42.54" },
     { name = "botocore", specifier = ">=1.42.54" },
-    { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
+    { name = "cloud-storage-api", git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git?rev=v1.0.0" },
     { name = "requests", specifier = ">=2.32.5" },
     { name = "structlog", specifier = ">=25.5.0" },
 ]
@@ -117,7 +116,7 @@ version = "0.1.0"
 source = { editable = "src/aws_client_service" }
 dependencies = [
     { name = "aws-client-impl" },
-    { name = "cloud-storage-client-api" },
+    { name = "cloud-storage-api" },
     { name = "fastapi" },
     { name = "itsdangerous" },
     { name = "pydantic" },
@@ -131,7 +130,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "aws-client-impl", editable = "src/aws_client_impl" },
-    { name = "cloud-storage-client-api", editable = "src/cloud_storage_client_api" },
+    { name = "cloud-storage-api", git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git?rev=v1.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
@@ -329,9 +328,9 @@ wheels = [
 ]
 
 [[package]]
-name = "cloud-storage-client-api"
-version = "0.1.0"
-source = { editable = "src/cloud_storage_client_api" }
+name = "cloud-storage-api"
+version = "1.0.0"
+source = { git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git?rev=v1.0.0#ed89a05318f42037c3501c8483ed26cb054b6787" }
 
 [[package]]
 name = "colorama"

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
-from cloud_storage_client_api.exceptions import ObjectNotFoundError
+from cloud_storage_api import ObjectNotFoundError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -28,15 +28,17 @@ def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
     return S3Client()
 
 
-def test_delete_file_returns_true_on_success(mocker: "MockerFixture") -> None:
-    """Test that delete_file returns True when delete_object succeeds."""
+def test_delete_file_returns_delete_result_on_success(mocker: "MockerFixture") -> None:
+    """Test that delete_file returns a DeleteResult when delete_object succeeds."""
     fake_boto_client = mocker.Mock()
     fake_boto_client.head_object.return_value = {}
+    fake_boto_client.delete_object.return_value = {}
     c = _make_client(mocker, fake_boto_client)
 
-    ok = c.delete_file("my-bucket", "my-key")
+    result = c.delete_file("my-bucket", "my-key")
 
-    assert ok is True
+    assert isinstance(result, dict)
+    assert result["deleted"] is True
     fake_boto_client.delete_object.assert_called_once_with(
         Bucket="my-bucket", Key="my-key"
     )

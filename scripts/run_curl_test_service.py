@@ -8,7 +8,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
 import uvicorn
-from cloud_storage_client_api.client import CloudStorageClient
+from cloud_storage_api import CloudStorageClient, DeleteResult, ObjectInfo
 
 
 class LocalCurlTestClient(CloudStorageClient):
@@ -37,7 +37,16 @@ class LocalCurlTestClient(CloudStorageClient):
         container_path = PurePosixPath(container)
         return self._root.joinpath(*container_path.parts, *object_path.parts)
 
-    def upload_file(self, container: str, local_path: str, remote_path: str) -> bool:
+    def _object_info(self, remote_path: str, local_path: Path) -> ObjectInfo:
+        """Build ObjectInfo from a local file path."""
+        return ObjectInfo(
+            object_name=remote_path,
+            size_bytes=local_path.stat().st_size if local_path.exists() else None,
+        )
+
+    def upload_file(
+        self, container: str, local_path: str, remote_path: str
+    ) -> ObjectInfo:
         """Upload a local file into the test storage root."""
         source_path = Path(local_path)
         if not source_path.exists():
@@ -47,52 +56,69 @@ class LocalCurlTestClient(CloudStorageClient):
         destination_path = self._resolve_remote_path(container, remote_path)
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_path, destination_path)
-        return True
+        return self._object_info(remote_path, destination_path)
 
-    def upload_obj(self, container: str, file_obj: BinaryIO, remote_path: str) -> bool:
+    def upload_obj(
+        self, container: str, file_obj: BinaryIO, remote_path: str
+    ) -> ObjectInfo:
         """Upload a file-like object into the test storage root."""
         destination_path = self._resolve_remote_path(container, remote_path)
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         destination_path.write_bytes(file_obj.read())
-        return True
+        return self._object_info(remote_path, destination_path)
 
     def download_file(
         self,
         container: str,
         object_name: str,
         file_name: str,
-    ) -> bool:
+    ) -> ObjectInfo:
         """Download a stored object into a local file path."""
         source_path = self._resolve_remote_path(container, object_name)
         if not source_path.exists():
-            return False
+            msg = f"Object '{object_name}' not found in container '{container}'"
+            raise FileNotFoundError(msg)
 
         destination_path = Path(file_name)
         destination_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_path, destination_path)
-        return True
+        return self._object_info(object_name, source_path)
 
-    def list_files(self, container: str, prefix: str = "") -> list[str]:
+    def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
         """List stored object keys filtered by a prefix."""
         container_root = self._root / container
         if not container_root.exists():
             return []
 
         return sorted(
-            path.relative_to(container_root).as_posix()
-            for path in container_root.rglob("*")
-            if path.is_file()
-            and path.relative_to(container_root).as_posix().startswith(prefix)
+            (
+                ObjectInfo(
+                    object_name=path.relative_to(container_root).as_posix(),
+                    size_bytes=path.stat().st_size,
+                )
+                for path in container_root.rglob("*")
+                if path.is_file()
+                and path.relative_to(container_root).as_posix().startswith(prefix)
+            ),
+            key=lambda info: info.object_name,
         )
 
-    def delete_file(self, container: str, object_name: str) -> bool:
+    def delete_file(self, container: str, object_name: str) -> DeleteResult:
         """Delete a stored object if it exists."""
         object_path = self._resolve_remote_path(container, object_name)
         if not object_path.exists():
-            return False
+            return DeleteResult(deleted=False)
 
         object_path.unlink()
-        return True
+        return DeleteResult(deleted=True)
+
+    def get_file_info(self, container: str, object_name: str) -> ObjectInfo:
+        """Return metadata for a stored object."""
+        target = self._resolve_remote_path(container, object_name)
+        if not target.exists():
+            msg = f"Object '{object_name}' not found in container '{container}'"
+            raise FileNotFoundError(msg)
+        return self._object_info(object_name, target)
 
 
 def main() -> None:

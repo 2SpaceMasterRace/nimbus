@@ -22,7 +22,6 @@ extend-exclude = [
 
 [tool.uv.workspace]
 members = [
-    "src/cloud_storage_client_api",
     "src/aws_client_impl",
     "src/aws_client_service",
     "src/aws_client_adapter",
@@ -30,7 +29,6 @@ members = [
 ]
 
 [tool.uv.sources]
-cloud-storage-client-api = { workspace = true }
 aws-client-impl = { workspace = true }
 aws-client-service = { workspace = true }
 aws-client-adapter = { workspace = true }
@@ -71,7 +69,6 @@ strict = true
 ignore_missing_imports = true
 mypy_path = [
     "src/aws_client_impl",
-    "src/cloud_storage_client_api",
     "src/aws_client_service",
     "src/aws_client_adapter",
 ]
@@ -120,6 +117,5 @@ exclude_lines = [
 packages = [
     "src/aws_client_service",
     "src/aws_client_impl",
-    "src/cloud_storage_client_api",
     "src/aws_client_adapter",
 ]

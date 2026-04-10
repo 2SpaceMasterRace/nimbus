@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from aws_client_impl.s3_client import S3Client
-from cloud_storage_client_api.exceptions import InvalidFileObjectError
+from cloud_storage_api import InvalidFileObjectError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture

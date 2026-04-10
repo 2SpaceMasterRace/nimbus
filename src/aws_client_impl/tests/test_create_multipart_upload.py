@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
-from cloud_storage_client_api.exceptions import StorageBackendError
+from cloud_storage_api import StorageBackendError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
-from cloud_storage_client_api.exceptions import StorageBackendError
+from cloud_storage_api import ObjectInfo, StorageBackendError
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -40,8 +40,11 @@ def test_list_files_returns_matching_files(
     client: TestClient,
     mock_storage_client: MagicMock,
 ) -> None:
-    """GET /files returns a list of matching file keys."""
-    mock_storage_client.list_files.return_value = ["docs/a.txt", "docs/b.txt"]
+    """GET /files returns a list of matching object metadata."""
+    mock_storage_client.list_files.return_value = [
+        ObjectInfo(object_name="docs/a.txt"),
+        ObjectInfo(object_name="docs/b.txt"),
+    ]
 
     response = client.get(
         "/files",
@@ -49,7 +52,11 @@ def test_list_files_returns_matching_files(
     )
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"files": ["docs/a.txt", "docs/b.txt"]}
+    body = response.json()
+    expected_count = 2
+    assert len(body) == expected_count
+    assert body[0]["object_name"] == "docs/a.txt"
+    assert body[1]["object_name"] == "docs/b.txt"
     mock_storage_client.list_files.assert_called_once_with("docs-bucket", "docs/")
 
 
@@ -66,7 +73,7 @@ def test_list_files_returns_empty_list(
     )
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"files": []}
+    assert response.json() == []
     mock_storage_client.list_files.assert_called_once_with("docs-bucket", "missing/")
 
 
@@ -98,10 +105,17 @@ def test_list_files_defaults_prefix_to_empty(
     mock_storage_client: MagicMock,
 ) -> None:
     """GET /files lists the whole container when prefix is omitted."""
-    mock_storage_client.list_files.return_value = ["a.txt", "b.txt"]
+    mock_storage_client.list_files.return_value = [
+        ObjectInfo(object_name="a.txt"),
+        ObjectInfo(object_name="b.txt"),
+    ]
 
     response = client.get("/files", params={"container": "docs-bucket"})
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"files": ["a.txt", "b.txt"]}
+    body = response.json()
+    expected_count = 2
+    assert len(body) == expected_count
+    assert body[0]["object_name"] == "a.txt"
+    assert body[1]["object_name"] == "b.txt"
     mock_storage_client.list_files.assert_called_once_with("docs-bucket", "")

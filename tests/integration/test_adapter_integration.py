@@ -12,8 +12,7 @@ from aws_client_adapter.service_adapter import (
     get_client_impl as get_adapter_client_impl,
 )
 from aws_client_service.main import app, get_storage_client
-from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.factory import get_client, register_client
+from cloud_storage_api import CloudStorageClient, DeleteResult, ObjectInfo
 from fastapi.testclient import TestClient
 
 from aws_s3_cloud_storage_service_client import AuthenticatedClient
@@ -41,64 +40,84 @@ class FileBackedStorageClient(CloudStorageClient):
 
         return self._root.joinpath(container, *object_path.parts)
 
-    def upload_file(self, container: str, local_path: str, remote_path: str) -> bool:
+    def upload_file(
+        self, container: str, local_path: str, remote_path: str
+    ) -> ObjectInfo:
         """Upload a local file into the file-backed test storage."""
         source = Path(local_path)
         destination = self._resolve_path(container, remote_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        return True
+        return ObjectInfo(object_name=remote_path, size_bytes=source.stat().st_size)
 
-    def upload_obj(self, container: str, file_obj: BinaryIO, remote_path: str) -> bool:
+    def upload_obj(
+        self, container: str, file_obj: BinaryIO, remote_path: str
+    ) -> ObjectInfo:
         """Upload a file-like object into the file-backed test storage."""
         destination = self._resolve_path(container, remote_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(file_obj.read())
-        return True
+        data = file_obj.read()
+        destination.write_bytes(data)
+        return ObjectInfo(object_name=remote_path, size_bytes=len(data))
 
-    def download_file(self, container: str, object_name: str, file_name: str) -> bool:
+    def download_file(
+        self, container: str, object_name: str, file_name: str
+    ) -> ObjectInfo:
         """Download an object from test storage into a local file path."""
         source = self._resolve_path(container, object_name)
         if not source.exists():
-            return False
+            msg = f"Object '{object_name}' not found"
+            raise FileNotFoundError(msg)
 
         destination = Path(file_name)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
-        return True
+        return ObjectInfo(object_name=object_name, size_bytes=source.stat().st_size)
 
-    def list_files(self, container: str, prefix: str = "") -> list[str]:
+    def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
         """List files in a container with an optional prefix filter."""
         container_root = self._root / container
         if not container_root.exists():
             return []
 
         return sorted(
-            path.relative_to(container_root).as_posix()
-            for path in container_root.rglob("*")
-            if path.is_file()
-            and path.relative_to(container_root).as_posix().startswith(prefix)
+            (
+                ObjectInfo(
+                    object_name=path.relative_to(container_root).as_posix(),
+                    size_bytes=path.stat().st_size,
+                )
+                for path in container_root.rglob("*")
+                if path.is_file()
+                and path.relative_to(container_root).as_posix().startswith(prefix)
+            ),
+            key=lambda info: info.object_name,
         )
 
-    def delete_file(self, container: str, object_name: str) -> bool:
+    def delete_file(self, container: str, object_name: str) -> DeleteResult:
         """Delete an object from the file-backed test storage."""
         target = self._resolve_path(container, object_name)
         if not target.exists():
-            return False
+            return DeleteResult(deleted=False)
 
         target.unlink()
-        return True
+        return DeleteResult(deleted=True)
+
+    def get_file_info(self, container: str, object_name: str) -> ObjectInfo:
+        """Return metadata for a stored object."""
+        target = self._resolve_path(container, object_name)
+        if not target.exists():
+            msg = f"Object '{object_name}' not found"
+            raise FileNotFoundError(msg)
+        return ObjectInfo(object_name=object_name, size_bytes=target.stat().st_size)
 
 
 @pytest.mark.circleci
-def test_adapter_registration_returns_http_backed_client(
+def test_adapter_get_client_impl_returns_http_backed_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Registering the adapter makes get_client return the HTTP-backed client."""
+    """get_client_impl from the adapter returns the HTTP-backed client."""
     monkeypatch.setenv("CLOUD_STORAGE_SERVICE_BASE_URL", "http://testserver")
-    register_client(get_adapter_client_impl)
-
-    client = get_client()
+    client = get_adapter_client_impl()
 
     assert isinstance(client, CloudStorageClient)
     assert isinstance(client, CloudStorageServiceAdapter)
@@ -125,19 +144,30 @@ def test_service_adapter_exercises_real_service_path(tmp_path: Path) -> None:
             generated_client.set_httpx_client(test_client)
             adapter = CloudStorageServiceAdapter(generated_client)
 
-            assert adapter.upload_file(
+            upload_result = adapter.upload_file(
                 "demo-bucket",
                 str(source_file),
                 "nested/source.txt",
             )
-            assert adapter.list_files("demo-bucket", "nested/") == ["nested/source.txt"]
-            assert adapter.download_file(
+            assert isinstance(upload_result, ObjectInfo)
+            assert upload_result.object_name == "nested/source.txt"
+
+            listed = adapter.list_files("demo-bucket", "nested/")
+            assert len(listed) == 1
+            assert listed[0].object_name == "nested/source.txt"
+
+            download_result = adapter.download_file(
                 "demo-bucket",
                 "nested/source.txt",
                 str(download_target),
             )
+            assert isinstance(download_result, ObjectInfo)
             assert download_target.read_text() == "hello from adapter"
-            assert adapter.delete_file("demo-bucket", "nested/source.txt")
+
+            delete_result = adapter.delete_file("demo-bucket", "nested/source.txt")
+            assert isinstance(delete_result, dict)
+            assert delete_result["deleted"] is True
+
             assert adapter.list_files("demo-bucket", "") == []
     finally:
         app.dependency_overrides.clear()

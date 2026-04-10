@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
+from cloud_storage_api import ObjectInfo
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -17,6 +18,11 @@ def _client_error() -> ClientError:
         error_response={"Error": {"Code": "500", "Message": "boom"}},
         operation_name="UploadPart",
     )
+
+
+def _stub_object_info(key: str = "k") -> ObjectInfo:
+    """Return a minimal ObjectInfo for use in test stubs."""
+    return ObjectInfo(object_name=key)
 
 
 def test_multipart_upload_file_completes_on_success(
@@ -40,9 +46,13 @@ def test_multipart_upload_file_completes_on_success(
     complete = mocker.patch.object(c, "complete_multipart_upload", return_value=True)
     abort = mocker.patch.object(c, "abort_multipart_upload", return_value=True)
 
-    ok = c._multipart_upload_file(container="my-bucket", local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
+    expected = _stub_object_info("k")
+    mocker.patch.object(S3Client, "_head_object_info", return_value=expected)
 
-    assert ok is True
+    result = c._multipart_upload_file(container="my-bucket", local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
+
+    assert isinstance(result, ObjectInfo)
+    assert result.object_name == "k"
     abort.assert_not_called()
     complete.assert_called_once_with(
         container="my-bucket",

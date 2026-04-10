@@ -9,11 +9,16 @@ from typing import Any, BinaryIO
 import boto3
 import structlog
 from botocore.exceptions import ClientError
-from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.exceptions import (
+from cloud_storage_api import (
+    AuthenticationError,
+    CloudStorageClient,
+    ContainerNotFoundError,
+    DeleteResult,
     InvalidContainerError,
     InvalidFileObjectError,
     InvalidObjectNameError,
+    LocalFileAccessError,
+    ObjectInfo,
     ObjectNotFoundError,
     StorageBackendError,
 )
@@ -60,7 +65,9 @@ class S3Client(CloudStorageClient):
         """
         return self._get_session().resource("s3")  # pragma: no cover
 
-    def upload_file(self, container: str, local_path: str, key: str) -> bool:
+    def upload_file(
+        self, container: str, local_path: str, remote_path: str
+    ) -> ObjectInfo:
         """Upload a file to the S3 bucket.
 
         Automatically uses multipart upload for files exceeding
@@ -70,41 +77,42 @@ class S3Client(CloudStorageClient):
         Args:
             container: The name of the bucket to upload to.
             local_path: The path to the local file to upload.
-            key: The S3 object key (destination path within the bucket).
+            remote_path: The S3 object key (destination path within the bucket).
 
         Returns:
-            True, if the upload was successful
+            Provider-agnostic metadata describing the uploaded object.
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
-            InvalidObjectNameError: If key is empty or starts with a leading slash.
+            InvalidObjectNameError: If remote_path is empty or starts with a
+                leading slash.
+            LocalFileAccessError: If local_path cannot be read.
             StorageBackendError: If the upload fails due to AWS service errors.
-            FileNotFoundError: If the local_path does not exist.
 
         """
         self._validate_container_name(container)
-        self._validate_object_name(key)
+        self._validate_object_name(remote_path)
         try:
             file_size = Path(local_path).stat().st_size
             if file_size > MULTIPART_THRESHOLD:
-                return self._multipart_upload_file(container, local_path, key)
+                return self._multipart_upload_file(container, local_path, remote_path)
             log.info("Commencing file upload...")
-            self._s3_client.upload_file(local_path, container, key)
-            log.info("File Uploaded Sucessfully !")
+            self._s3_client.upload_file(local_path, container, remote_path)
+            log.info("File uploaded successfully")
         except ClientError as exc:
-            log.exception("Failed to upload", container=container, key=key)
+            log.exception("Failed to upload", container=container, key=remote_path)
             raise self._translate_client_error(
-                exc, container=container, key=key
+                exc, container=container, key=remote_path
             ) from exc
-        except FileNotFoundError:
-            log.exception(
-                "Unable to locate file. Check file path",
-                local_path=local_path,
-            )
-            raise
-        return True
+        except (FileNotFoundError, OSError) as exc:
+            msg = f"Cannot read local file '{local_path}'"
+            log.exception(msg, local_path=local_path)
+            raise LocalFileAccessError(msg) from exc
+        return self._head_object_info(container, remote_path)
 
-    def upload_obj(self, container: str, file_obj: BinaryIO, key: str) -> bool:
+    def upload_obj(
+        self, container: str, file_obj: BinaryIO, remote_path: str
+    ) -> ObjectInfo:
         """Upload a binary file-like object to S3.
 
         Seekable objects smaller than ``MULTIPART_THRESHOLD`` use a standard
@@ -113,24 +121,24 @@ class S3Client(CloudStorageClient):
         Args:
             container: The name of the bucket to upload to.
             file_obj: A readable binary file-like object.
-            key: The destination object key within the bucket.
+            remote_path: The destination object key within the bucket.
 
         Returns:
-            True if the upload succeeds.
+            Provider-agnostic metadata describing the uploaded object.
 
         Raises:
             InvalidContainerError: If container is invalid.
-            InvalidObjectNameError: If key is invalid.
+            InvalidObjectNameError: If remote_path is invalid.
             InvalidFileObjectError: If file_obj is not a readable binary object.
             StorageBackendError: If S3 returns an unexpected error.
 
         """
         self._validate_container_name(container)
-        self._validate_object_name(key)
+        self._validate_object_name(remote_path)
         self._validate_file_obj(file_obj=file_obj)
 
         if not file_obj.seekable():
-            return self._multipart_upload_obj(container, file_obj, key)
+            return self._multipart_upload_obj(container, file_obj, remote_path)
 
         file_obj.seek(0, 2)
         file_size = file_obj.tell()
@@ -138,20 +146,24 @@ class S3Client(CloudStorageClient):
 
         if file_size > MULTIPART_THRESHOLD:  # pragma: no cover
             return self._multipart_upload_obj(
-                container, file_obj, key
+                container, file_obj, remote_path
             )  # pragma: no cover
 
         try:
             log.info("Commencing object upload...")
-            self._s3_client.upload_fileobj(file_obj, container, key)
+            self._s3_client.upload_fileobj(file_obj, container, remote_path)
         except ClientError as exc:
-            log.exception("Failed to upload object", container=container, key=key)
+            log.exception(
+                "Failed to upload object", container=container, key=remote_path
+            )
             raise self._translate_client_error(
-                exc, container=container, key=key
+                exc, container=container, key=remote_path
             ) from exc
-        return True
+        return self._head_object_info(container, remote_path)
 
-    def _multipart_upload_file(self, container: str, local_path: str, key: str) -> bool:
+    def _multipart_upload_file(
+        self, container: str, local_path: str, key: str
+    ) -> ObjectInfo:
         """Upload a large local file using S3 multipart upload.
 
         Args:
@@ -160,7 +172,7 @@ class S3Client(CloudStorageClient):
             key: The destination object key.
 
         Returns:
-            True if the upload succeeds.
+            Provider-agnostic metadata describing the uploaded object.
 
         Raises:
             ClientError: If any multipart step fails.
@@ -208,11 +220,11 @@ class S3Client(CloudStorageClient):
             upload_id=upload_id,
             parts=parts,
         )
-        return True
+        return self._head_object_info(container, key)
 
     def _multipart_upload_obj(
         self, container: str, file_obj: BinaryIO, key: str
-    ) -> bool:  # pragma: no cover
+    ) -> ObjectInfo:  # pragma: no cover
         """Upload a large file-like object using S3 multipart upload.
 
         Args:
@@ -221,7 +233,7 @@ class S3Client(CloudStorageClient):
             key: The destination object key.
 
         Returns:
-            True if the upload succeeds.
+            Provider-agnostic metadata describing the uploaded object.
 
         Raises:
             ClientError: If any multipart step fails.
@@ -268,7 +280,7 @@ class S3Client(CloudStorageClient):
             upload_id=upload_id,
             parts=parts,
         )
-        return True
+        return self._head_object_info(container, key)
 
     def create_bucket(
         self,
@@ -358,23 +370,21 @@ class S3Client(CloudStorageClient):
         container: str,
         object_name: str,
         file_name: str,
-    ) -> bool:
+    ) -> ObjectInfo:
         """Download an S3 object to a file.
-
-        The ``download_file`` method accepts the names of the bucket
-        and object to download and the filename to save the file to.
 
         Args:
             container: The name of the bucket to download from.
-            object_name: The name of the key to download from.
-            file_name: The path to the file to download to.
+            object_name: The key of the object to download.
+            file_name: Local filesystem path to write the downloaded file to.
 
         Returns:
-            True if the file was downloaded successfully.
+            Provider-agnostic metadata describing the downloaded object.
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
             InvalidObjectNameError: If object_name is empty or otherwise invalid.
+            LocalFileAccessError: If file_name cannot be written locally.
             ObjectNotFoundError: If the object does not exist.
             StorageBackendError: If the download fails due to AWS service errors.
 
@@ -383,9 +393,7 @@ class S3Client(CloudStorageClient):
         self._validate_object_name(object_name)
         try:
             log.info("Downloading S3 Object to a file...")
-            self._s3_resource.meta.client.download_file(
-                container, object_name, file_name
-            )
+            self._s3_client.download_file(container, object_name, file_name)
         except ClientError as exc:
             log.exception(
                 "Failed to download file from Amazon S3 Bucket",
@@ -398,7 +406,11 @@ class S3Client(CloudStorageClient):
                 container=container,
                 key=object_name,
             ) from exc
-        return True
+        except OSError as exc:
+            msg = f"Cannot write to local path '{file_name}'"
+            log.exception(msg, file_name=file_name)
+            raise LocalFileAccessError(msg) from exc
+        return self._head_object_info(container, object_name)
 
     # Note: Consider combining download_file and download_fileobj in the future
     # Also look into adding more exceptions for file path access
@@ -449,15 +461,15 @@ class S3Client(CloudStorageClient):
             return False
         return True
 
-    def list_files(self, container: str, prefix: str = "") -> list[str]:
-        """List object keys in an S3 bucket.
+    def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
+        """List objects in an S3 bucket.
 
         Args:
             container: The name of the bucket to list from.
-            prefix: Optional key prefix filter.
+            prefix: Key prefix filter. Use ``""`` to list all objects.
 
         Returns:
-            A list of matching object keys.
+            Metadata for matching objects, sorted ascending by ``object_name``.
 
         Raises:
             InvalidContainerError: If container is invalid.
@@ -468,16 +480,26 @@ class S3Client(CloudStorageClient):
         try:
             paginator = self._s3_client.get_paginator("list_objects_v2")
             pages = paginator.paginate(Bucket=container, Prefix=prefix)
-            return [obj["Key"] for page in pages for obj in page.get("Contents", [])]
+            items = [
+                ObjectInfo(
+                    object_name=obj["Key"],
+                    size_bytes=obj.get("Size"),
+                    updated_at=obj.get("LastModified"),
+                    integrity=obj.get("ETag"),
+                    storage_tier=obj.get("StorageClass"),
+                )
+                for page in pages
+                for obj in page.get("Contents", [])
+            ]
         except ClientError as exc:
             raise self._translate_client_error(exc, container=container) from exc
+        return sorted(items, key=lambda info: info.object_name)
 
-    # Note: Batch deletion of multiple files could be added for efficiency
     def delete_file(
         self,
         container: str,
         object_name: str,
-    ) -> bool:
+    ) -> DeleteResult:
         """Remove an object from a bucket.
 
         Args:
@@ -485,7 +507,7 @@ class S3Client(CloudStorageClient):
             object_name: The object key to delete.
 
         Returns:
-            True if the object was deleted successfully.
+            Provider-agnostic deletion metadata.
 
         Raises:
             InvalidContainerError: If container is invalid.
@@ -499,7 +521,9 @@ class S3Client(CloudStorageClient):
         try:
             self._s3_client.head_object(Bucket=container, Key=object_name)
             log.info("Deleting S3 Object...")
-            self._s3_client.delete_object(Bucket=container, Key=object_name)
+            resp: dict[str, Any] = self._s3_client.delete_object(
+                Bucket=container, Key=object_name
+            )
         except ClientError as exc:
             log.exception(
                 "Failed to delete object from Amazon S3 Bucket",
@@ -511,7 +535,42 @@ class S3Client(CloudStorageClient):
                 container=container,
                 key=object_name,
             ) from exc
-        return True
+        return DeleteResult(
+            deleted=True,
+            version_id=resp.get("VersionId"),
+            request_charged=resp.get("RequestCharged") == "requester",
+        )
+
+    def get_file_info(self, container: str, object_name: str) -> ObjectInfo:
+        """Return metadata for a single stored object without downloading it.
+
+        Args:
+            container: The name of the bucket containing the object.
+            object_name: The key of the object to inspect.
+
+        Returns:
+            Provider-agnostic metadata describing the object.
+
+        Raises:
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If object_name is invalid.
+            ObjectNotFoundError: If the object does not exist.
+            StorageBackendError: If the request fails.
+
+        """
+        self._validate_container_name(container)
+        self._validate_object_name(object_name)
+        try:
+            return self._head_object_info(container, object_name)
+        except ClientError as exc:
+            log.exception(
+                "Failed to get file info",
+                container=container,
+                object_name=object_name,
+            )
+            raise self._translate_client_error(
+                exc, container=container, key=object_name
+            ) from exc
 
     # Helpers
     def _get_session(self) -> boto3.Session:
@@ -521,6 +580,30 @@ class S3Client(CloudStorageClient):
     def get_session(self) -> boto3.Session:  # pragma: no cover
         """Return a boto3 Session for the configured region."""
         return self._get_session()  # pragma: no cover
+
+    def _head_object_info(self, container: str, key: str) -> ObjectInfo:
+        """Fetch object metadata via ``head_object`` and return an ``ObjectInfo``.
+
+        Args:
+            container: The bucket name.
+            key: The S3 object key.
+
+        Returns:
+            Provider-agnostic metadata for the object.
+
+        """
+        resp: dict[str, Any] = self._s3_client.head_object(Bucket=container, Key=key)
+        return ObjectInfo(
+            object_name=key,
+            version_id=resp.get("VersionId"),
+            data_type=resp.get("ContentType"),
+            integrity=resp.get("ETag"),
+            encryption=resp.get("ServerSideEncryption"),
+            storage_tier=resp.get("StorageClass"),
+            size_bytes=resp.get("ContentLength"),
+            updated_at=resp.get("LastModified"),
+            metadata=resp.get("Metadata"),
+        )
 
     def _validate_file_obj(self, file_obj: BinaryIO) -> None:
         """Validate a file-like object for upload.
@@ -776,16 +859,31 @@ class S3Client(CloudStorageClient):
         *,
         container: str,
         key: str | None = None,
-    ) -> StorageBackendError | ObjectNotFoundError:
+    ) -> (
+        ContainerNotFoundError
+        | ObjectNotFoundError
+        | AuthenticationError
+        | StorageBackendError
+    ):
         """Convert boto3 errors into provider-agnostic domain exceptions."""
         error = exc.response.get("Error", {})
         error_code = str(error.get("Code", "")).lower()
-        if error_code in {"404", "nosuchkey", "nosuchbucket", "notfound"}:
+        http_status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+
+        if error_code == "nosuchbucket":
+            msg = f"Container '{container}' was not found"
+            return ContainerNotFoundError(msg)
+
+        if error_code in {"404", "nosuchkey", "notfound"} or http_status == 404:  # noqa: PLR2004
             if key is None:
                 msg = f"Container '{container}' was not found"
-            else:
-                msg = f"Object '{key}' was not found in container '{container}'"
+                return ContainerNotFoundError(msg)
+            msg = f"Object '{key}' was not found in container '{container}'"
             return ObjectNotFoundError(msg)
+
+        if error_code in {"403", "accessdenied"} or http_status == 403:  # noqa: PLR2004
+            msg = f"Access denied for container '{container}'"
+            return AuthenticationError(msg)
 
         if key is None:
             msg = f"S3 operation failed for container '{container}'"

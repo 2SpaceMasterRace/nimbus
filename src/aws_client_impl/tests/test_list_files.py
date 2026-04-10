@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
-from cloud_storage_client_api.exceptions import StorageBackendError
+from cloud_storage_api import ObjectInfo, StorageBackendError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -28,19 +28,22 @@ def _make_client(mocker: "MockerFixture", fake_boto_client: object) -> S3Client:
     return S3Client()
 
 
-def test_list_files_returns_keys_on_success(mocker: "MockerFixture") -> None:
-    """Test list_files returns object keys when Contents is present."""
+def test_list_files_returns_object_info_on_success(mocker: "MockerFixture") -> None:
+    """Test list_files returns ObjectInfo instances when Contents is present."""
     fake_boto_client = mocker.Mock()
     fake_paginator = mocker.Mock()
     fake_paginator.paginate.return_value = [
-        {"Contents": [{"Key": "a.txt"}, {"Key": "b.txt"}]}
+        {"Contents": [{"Key": "a.txt", "Size": 10}, {"Key": "b.txt", "Size": 20}]}
     ]
     fake_boto_client.get_paginator.return_value = fake_paginator
     c = _make_client(mocker, fake_boto_client)
 
-    keys = c.list_files(container="my-bucket", prefix="")
+    items = c.list_files(container="my-bucket", prefix="")
 
-    assert keys == ["a.txt", "b.txt"]
+    expected_count = 2
+    assert len(items) == expected_count
+    assert all(isinstance(item, ObjectInfo) for item in items)
+    assert [item.object_name for item in items] == ["a.txt", "b.txt"]
     fake_boto_client.get_paginator.assert_called_once_with("list_objects_v2")
     fake_paginator.paginate.assert_called_once_with(
         Bucket="my-bucket",
@@ -58,9 +61,9 @@ def test_list_files_returns_empty_list_when_no_contents(
     fake_boto_client.get_paginator.return_value = fake_paginator
     c = _make_client(mocker, fake_boto_client)
 
-    keys = c.list_files(container="my-bucket", prefix="x/")
+    items = c.list_files(container="my-bucket", prefix="x/")
 
-    assert keys == []
+    assert items == []
     fake_paginator.paginate.assert_called_once_with(
         Bucket="my-bucket",
         Prefix="x/",

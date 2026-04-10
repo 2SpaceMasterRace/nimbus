@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
-from cloud_storage_client_api.exceptions import StorageBackendError
+from cloud_storage_api import ObjectInfo, StorageBackendError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -20,24 +20,31 @@ def _client_error() -> ClientError:
     )
 
 
+def _stub_object_info(key: str = "k") -> ObjectInfo:
+    """Return a minimal ObjectInfo for use in test stubs."""
+    return ObjectInfo(object_name=key)
+
+
 def test_upload_obj_raises_value_error_on_empty_key(
     mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
-    """Test upload_obj raises ValueError when key is empty."""
+    """Test upload_obj raises ValueError when remote_path is empty."""
     c = S3Client()
 
     with pytest.raises(ValueError, match="Key cannot be empty"):
-        c.upload_obj(container="my-bucket", file_obj=io.BytesIO(b"abc"), key="")
+        c.upload_obj(container="my-bucket", file_obj=io.BytesIO(b"abc"), remote_path="")
 
 
 def test_upload_obj_raises_value_error_on_leading_slash(
     mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
 ) -> None:
-    """Test upload_obj raises ValueError when key starts with '/'."""
+    """Test upload_obj raises ValueError when remote_path starts with '/'."""
     c = S3Client()
 
     with pytest.raises(ValueError, match="leading slash"):
-        c.upload_obj(container="my-bucket", file_obj=io.BytesIO(b"abc"), key="/bad")
+        c.upload_obj(
+            container="my-bucket", file_obj=io.BytesIO(b"abc"), remote_path="/bad"
+        )
 
 
 def test_upload_obj_calls_singlepart_upload_when_small(
@@ -49,14 +56,17 @@ def test_upload_obj_calls_singlepart_upload_when_small(
     fake_session.client.return_value = fake_client
     mocker.patch.object(S3Client, "_get_session", return_value=fake_session)
 
-    # force threshold big so BytesIO is treated as small
     mocker.patch("aws_client_impl.s3_client.MULTIPART_THRESHOLD", 10_000_000)
+
+    expected = _stub_object_info("k")
+    mocker.patch.object(S3Client, "_head_object_info", return_value=expected)
 
     c = S3Client()
     buf = io.BytesIO(b"hello")
-    ok = c.upload_obj(container="my-bucket", file_obj=buf, key="k")
+    result = c.upload_obj(container="my-bucket", file_obj=buf, remote_path="k")
 
-    assert ok is True
+    assert isinstance(result, ObjectInfo)
+    assert result.object_name == "k"
     fake_client.upload_fileobj.assert_called_once()
     args = fake_client.upload_fileobj.call_args[0]
     assert args[1] == "my-bucket"
@@ -83,11 +93,12 @@ def test_upload_obj_calls_multipart_when_unseekable(
             return False
 
     c = S3Client()
-    mp = mocker.patch.object(c, "_multipart_upload_obj", return_value=True)
+    expected = _stub_object_info("k")
+    mp = mocker.patch.object(c, "_multipart_upload_obj", return_value=expected)
 
-    ok = c.upload_obj(container="my-bucket", file_obj=Unseekable(), key="k")  # type: ignore[arg-type]  # intentionally passing a duck-typed stub that doesn't satisfy BinaryIO formally, to exercise the unseekable upload path
+    result = c.upload_obj(container="my-bucket", file_obj=Unseekable(), remote_path="k")  # type: ignore[arg-type]  # intentionally passing a duck-typed stub that doesn't satisfy BinaryIO formally, to exercise the unseekable upload path
 
-    assert ok is True
+    assert isinstance(result, ObjectInfo)
     mp.assert_called_once()
     fake_client.upload_fileobj.assert_not_called()
 
@@ -108,6 +119,6 @@ def test_upload_obj_raises_client_error_on_upload_failure(
     buf = io.BytesIO(b"hello")
 
     with pytest.raises(StorageBackendError):
-        c.upload_obj(container="my-bucket", file_obj=buf, key="k")
+        c.upload_obj(container="my-bucket", file_obj=buf, remote_path="k")
 
     fake_client.upload_fileobj.assert_called_once()

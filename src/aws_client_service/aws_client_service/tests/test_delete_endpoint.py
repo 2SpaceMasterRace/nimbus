@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from aws_client_service.main import app, get_storage_client
-from cloud_storage_client_api.exceptions import ObjectNotFoundError, StorageBackendError
+from cloud_storage_api import DeleteResult, ObjectNotFoundError, StorageBackendError
 from fastapi.testclient import TestClient
 
 if TYPE_CHECKING:
@@ -37,18 +37,24 @@ def mock_storage_client() -> MagicMock:
     return mock_client
 
 
+def _stub_delete_result(*, deleted: bool = True) -> DeleteResult:
+    """Return a minimal DeleteResult for use in test stubs."""
+    return DeleteResult(deleted=deleted)
+
+
 @pytest.mark.circleci
 def test_delete_returns_ok_on_success(
     client: TestClient,
     mock_storage_client: MagicMock,
 ) -> None:
-    """DELETE /files/{container}/{object_name} returns 200 with ok=true on success."""
-    mock_storage_client.delete_file.return_value = True
+    """DELETE /files/{container}/{object_name} returns 200 with deleted=true."""
+    mock_storage_client.delete_file.return_value = _stub_delete_result(deleted=True)
 
     response = client.delete("/files/my-bucket/my-key")
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"ok": True}
+    body = response.json()
+    assert body["deleted"] is True
 
 
 @pytest.mark.circleci
@@ -90,7 +96,7 @@ def test_delete_calls_client_with_correct_args(
     mock_storage_client: MagicMock,
 ) -> None:
     """DELETE /files/{container}/{object_name} passes path params to delete_file."""
-    mock_storage_client.delete_file.return_value = True
+    mock_storage_client.delete_file.return_value = _stub_delete_result(deleted=True)
 
     client.delete("/files/my-bucket/my-key")
 
@@ -103,12 +109,13 @@ def test_delete_nested_key(
     mock_storage_client: MagicMock,
 ) -> None:
     """DELETE endpoint handles nested S3 keys with slashes."""
-    mock_storage_client.delete_file.return_value = True
+    mock_storage_client.delete_file.return_value = _stub_delete_result(deleted=True)
 
     response = client.delete("/files/my-bucket/folder/sub/file.txt")
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"ok": True}
+    body = response.json()
+    assert body["deleted"] is True
     mock_storage_client.delete_file.assert_called_once_with(
         "my-bucket",
         "folder/sub/file.txt",
