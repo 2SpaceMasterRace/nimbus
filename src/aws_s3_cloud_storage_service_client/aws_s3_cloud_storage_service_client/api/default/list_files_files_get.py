@@ -1,0 +1,283 @@
+from http import HTTPStatus
+from typing import Any
+
+import httpx
+
+from ... import errors
+from ...client import AuthenticatedClient, Client
+from ...models.http_validation_error import HTTPValidationError
+from ...models.object_info_response import ObjectInfoResponse
+from ...types import UNSET, Response, Unset
+
+
+def _get_kwargs(
+    *,
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(x_api_key, Unset):
+        headers["X-API-Key"] = x_api_key
+
+    if not isinstance(authorization, Unset):
+        headers["authorization"] = authorization
+
+    params: dict[str, Any] = {}
+
+    params["container"] = container
+
+    params["prefix"] = prefix
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
+
+    _kwargs: dict[str, Any] = {
+        "method": "get",
+        "url": "/files",
+        "params": params,
+    }
+
+    _kwargs["headers"] = headers
+    return _kwargs
+
+
+def _parse_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> HTTPValidationError | list[ObjectInfoResponse] | None:
+    if response.status_code == 200:
+        response_200 = []
+        _response_200 = response.json()
+        for response_200_item_data in _response_200:
+            response_200_item = ObjectInfoResponse.from_dict(response_200_item_data)
+
+            response_200.append(response_200_item)
+
+        return response_200
+
+    if response.status_code == 422:
+        response_422 = HTTPValidationError.from_dict(response.json())
+
+        return response_422
+
+    if client.raise_on_unexpected_status:
+        raise errors.UnexpectedStatus(response.status_code, response.content)
+    else:
+        return None
+
+
+def _build_response(
+    *, client: AuthenticatedClient | Client, response: httpx.Response
+) -> Response[HTTPValidationError | list[ObjectInfoResponse]]:
+    return Response(
+        status_code=HTTPStatus(response.status_code),
+        content=response.content,
+        headers=response.headers,
+        parsed=_parse_response(client=client, response=response),
+    )
+
+
+def sync_detailed(
+    *,
+    client: AuthenticatedClient | Client,
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> Response[HTTPValidationError | list[ObjectInfoResponse]]:
+    """List Files
+
+     List files that match a given prefix.
+
+    Args:
+        container: Container used to scope the listing operation.
+        prefix: Prefix used to filter objects.
+        client: Injected cloud storage client.
+
+    Returns:
+        A list of object metadata entries.
+
+    Raises:
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the container does not exist.
+        HTTPException: 502 if the storage backend fails.
+
+    Args:
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[HTTPValidationError | list[ObjectInfoResponse]]
+    """
+
+    kwargs = _get_kwargs(
+        container=container,
+        prefix=prefix,
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+    response = client.get_httpx_client().request(
+        **kwargs,
+    )
+
+    return _build_response(client=client, response=response)
+
+
+def sync(
+    *,
+    client: AuthenticatedClient | Client,
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> HTTPValidationError | list[ObjectInfoResponse] | None:
+    """List Files
+
+     List files that match a given prefix.
+
+    Args:
+        container: Container used to scope the listing operation.
+        prefix: Prefix used to filter objects.
+        client: Injected cloud storage client.
+
+    Returns:
+        A list of object metadata entries.
+
+    Raises:
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the container does not exist.
+        HTTPException: 502 if the storage backend fails.
+
+    Args:
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        HTTPValidationError | list[ObjectInfoResponse]
+    """
+
+    return sync_detailed(
+        client=client,
+        container=container,
+        prefix=prefix,
+        x_api_key=x_api_key,
+        authorization=authorization,
+    ).parsed
+
+
+async def asyncio_detailed(
+    *,
+    client: AuthenticatedClient | Client,
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> Response[HTTPValidationError | list[ObjectInfoResponse]]:
+    """List Files
+
+     List files that match a given prefix.
+
+    Args:
+        container: Container used to scope the listing operation.
+        prefix: Prefix used to filter objects.
+        client: Injected cloud storage client.
+
+    Returns:
+        A list of object metadata entries.
+
+    Raises:
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the container does not exist.
+        HTTPException: 502 if the storage backend fails.
+
+    Args:
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        Response[HTTPValidationError | list[ObjectInfoResponse]]
+    """
+
+    kwargs = _get_kwargs(
+        container=container,
+        prefix=prefix,
+        x_api_key=x_api_key,
+        authorization=authorization,
+    )
+
+    response = await client.get_async_httpx_client().request(**kwargs)
+
+    return _build_response(client=client, response=response)
+
+
+async def asyncio(
+    *,
+    client: AuthenticatedClient | Client,
+    container: str,
+    prefix: str | Unset = "",
+    x_api_key: None | str | Unset = UNSET,
+    authorization: None | str | Unset = UNSET,
+) -> HTTPValidationError | list[ObjectInfoResponse] | None:
+    """List Files
+
+     List files that match a given prefix.
+
+    Args:
+        container: Container used to scope the listing operation.
+        prefix: Prefix used to filter objects.
+        client: Injected cloud storage client.
+
+    Returns:
+        A list of object metadata entries.
+
+    Raises:
+        HTTPException: 400 if the container name is invalid.
+        HTTPException: 401 if credentials are rejected.
+        HTTPException: 404 if the container does not exist.
+        HTTPException: 502 if the storage backend fails.
+
+    Args:
+        container (str):
+        prefix (str | Unset):  Default: ''.
+        x_api_key (None | str | Unset):
+        authorization (None | str | Unset):
+
+    Raises:
+        errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
+        httpx.TimeoutException: If the request takes longer than Client.timeout.
+
+    Returns:
+        HTTPValidationError | list[ObjectInfoResponse]
+    """
+
+    return (
+        await asyncio_detailed(
+            client=client,
+            container=container,
+            prefix=prefix,
+            x_api_key=x_api_key,
+            authorization=authorization,
+        )
+    ).parsed

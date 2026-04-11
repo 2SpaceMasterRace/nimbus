@@ -1,0 +1,24 @@
+[project]
+name = "aws-client-service"
+version = "0.1.0"
+description = "FastAPI service for AWS S3 cloud storage client"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "itsdangerous>=2.2.0",
+    "pydantic>=2.11.7",
+    "uvicorn>=0.34.0",
+    "aws-client-impl",
+    "python-dotenv>=1.2.2",
+    "python-multipart>=0.0.22",
+    "starlette>=0.40.0",
+    "structlog>=25.5.0",
+    "cloud-storage-api",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+cloud-storage-api = { git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git", rev = "v1.0.0" }
