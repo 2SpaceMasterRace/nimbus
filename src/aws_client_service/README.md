@@ -20,6 +20,7 @@ generate the service client.
 | `GET` | `/files` | List files in a container |
 | `GET` | `/download` | Download an object |
 | `DELETE` | `/files/{container}/{object_name}` | Delete an object |
+| `GET` | `/files/{container}/{object_name}/info` | Get object metadata |
 
 Protected file routes accept either:
 
@@ -49,6 +50,6 @@ curl -H "X-API-Key: $API_KEY" \
 - `fastapi`
 - `uvicorn`
 - `python-multipart`
-- `cloud-storage-client-api`
+- `cloud-storage-api` (external, via git)
 - `aws-client-impl`
 - `structlog`

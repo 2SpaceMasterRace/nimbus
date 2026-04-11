@@ -54,7 +54,7 @@ Upload a file to an S3 bucket.
 
 | Status | Meaning |
 |--------|---------|
-| `200` | `{"ok": true}` — file uploaded successfully |
+| `200` | `ObjectInfoResponse` — file uploaded successfully |
 | `400` | Invalid key or bucket does not match the configured service bucket |
 | `422` | Missing or invalid parameters |
 | `502` | Unexpected storage exception (details logged server-side) |
@@ -84,7 +84,7 @@ List files in a container.
 
 | Status | Meaning |
 |--------|---------|
-| `200` | `{"files": ["..."]}` |
+| `200` | `list[ObjectInfoResponse]` |
 | `400` | Invalid container name |
 | `422` | Missing or invalid parameters |
 | `502` | Unexpected storage exception |
@@ -139,7 +139,7 @@ Delete an object from an S3 bucket.
 
 | Status | Meaning |
 |--------|---------|
-| `200` | `{"ok": true}` — object deleted successfully |
+| `200` | `DeleteResultResponse` — object deleted successfully |
 | `400` | Invalid container or object name |
 | `404` | Object not found or storage client returned failure |
 | `502` | Unexpected storage exception (details logged server-side) |
@@ -152,23 +152,41 @@ curl -X DELETE \
   "http://localhost:8000/files/my-bucket/reports/data.csv"
 ```
 
+### `GET /files/{container}/{object_name:path}/info`
+
+Get metadata for an object without downloading it.
+
+**Path parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `container` | string | yes | S3 bucket name |
+| `object_name` | string | yes | S3 object key (e.g. `reports/data.csv`) |
+
+**Responses:**
+
+| Status | Meaning |
+|--------|---------|
+| `200` | `ObjectInfoResponse` — object metadata |
+| `400` | Invalid container or object name |
+| `404` | Object not found |
+| `502` | Unexpected storage exception |
+
+**Example:**
+
+```bash
+curl -H "X-API-Key: $API_KEY" \
+  "http://localhost:8000/files/my-bucket/reports/data.csv/info"
+```
+
 ---
 
-## Python Client (`cloud_storage_client_api`)
+## Python Interface (`cloud_storage_api`)
 
-```{eval-rst}
-.. automodule:: cloud_storage_client_api.client
-   :members:
-   :undoc-members:
-   :show-inheritance:
-```
-
-```{eval-rst}
-.. automodule:: cloud_storage_client_api.factory
-   :members:
-   :undoc-members:
-   :show-inheritance:
-```
+The abstract `CloudStorageClient` contract, domain types (`ObjectInfo`,
+`DeleteResult`), and domain exceptions are provided by the external
+[`cloud_storage_api`](https://github.com/2SpaceMasterRace/ospsd-cloud-storage)
+package. See that repository for the full interface reference.
 
 ## S3 Implementation (`aws_client_impl`)
 

@@ -23,7 +23,7 @@ That difference matters more than it might seem.
 
 If you write your whole program directly against `boto3`, then every part of your program learns AWS-specific ideas. It learns bucket rules, S3 object semantics, SDK response shapes, and provider-specific exceptions. Once that knowledge spreads everywhere, changing your implementation becomes expensive. Even understanding the code becomes harder, because business behavior and infrastructure details get mixed together.
 
-This repository takes the opposite approach. It starts by defining a small contract: if something calls itself a cloud storage client, it should be able to upload a file, upload a file-like object, download a file, list files, and delete a file. That contract lives in `src/cloud_storage_client_api/cloud_storage_client_api/client.py:14-141`. Everything else in the repository is built around honoring that contract without exposing unnecessary detail.
+This repository takes the opposite approach. It starts by defining a small contract: if something calls itself a cloud storage client, it should be able to upload a file, upload a file-like object, download a file, list files, delete a file, and get file info. That contract lives in the external `cloud_storage_api` package. Everything else in the repository is built around honoring that contract without exposing unnecessary detail.
 
 This is one of the most important software engineering habits you can learn early: separate what the system promises from how the system happens to do it today.
 
@@ -49,7 +49,7 @@ That means this book will treat Python 3.14 as a living toolset, not as a bag of
 
 We will spend time on the language itself: variables, control flow, functions, classes, exceptions, iterators, context managers, modules, and type hints. But we will also spend time on the standard library, because in Python the standard library is part of knowing the language. A Python programmer who does not know the standard library is often like a carpenter who owns a workshop but only uses one hammer.
 
-You can already see the standard library shaping this project. The abstract interface depends on `abc` and `typing` (`src/cloud_storage_client_api/cloud_storage_client_api/client.py:10-29`). The CLI entry point reads configuration from `os.environ` (`main.py:9-29`). The service layer uses `pathlib` and `tempfile` to create and clean up download files (`src/aws_client_service/aws_client_service/main.py:3-6`, `157-199`). Those are not side notes. They are examples of ordinary Python engineering.
+You can already see the standard library shaping this project. The abstract interface (in the external `cloud_storage_api` package) depends on `abc` and `typing`. The CLI entry point reads configuration from `os.environ` (`main.py:9-29`). The service layer uses `pathlib` and `tempfile` to create and clean up download files (`src/aws_client_service/aws_client_service/main.py`). Those are not side notes. They are examples of ordinary Python engineering.
 
 Later chapters will make that toolbox explicit. We will walk through the standard library in themed groups: paths and files, text and bytes, JSON and configuration, exceptions, collections, typing, testing helpers, subprocesses, and concurrency tools. The goal will not be to memorize every module. The goal will be to know how to think: when you face a problem, where should you look first, and what kind of tool is likely to fit it?
 
@@ -77,7 +77,7 @@ This will be a repeating pattern throughout the book. We will read what the offi
 
 The repository's architecture is summarized in `README.md:30-57` and explained in more depth in `DESIGN.md:6-29`. There are five packages in the workspace, and it is worth understanding them as a story rather than as a pile of folders.
 
-The story starts with `cloud_storage_client_api`. This is the quiet center of the project. It defines the contract, but it does not know how anything is implemented. It does not know about `boto3`, FastAPI, HTTP, or AWS. That is deliberate. Its job is not to do storage. Its job is to say what storage behavior means.
+The story starts with `cloud_storage_api` (an external package). This is the quiet center of the project. It defines the contract, but it does not know how anything is implemented. It does not know about `boto3`, FastAPI, HTTP, or AWS. That is deliberate. Its job is not to do storage. Its job is to say what storage behavior means.
 
 Next comes `aws_client_impl`. This is the local implementation layer. It knows about S3 and `boto3`. It knows how multipart uploads work. It knows how to turn provider-specific problems into the cleaner domain exceptions defined by the contract package. If the first package says what storage means, this package says how S3 satisfies that promise.
 
@@ -95,7 +95,7 @@ When beginners first open a codebase, they often look for "the main file" and ho
 
 A better approach is to read outward from the contract and inward from the entry points.
 
-If you read `src/cloud_storage_client_api/cloud_storage_client_api/client.py:14-141`, you learn what the system promises. If you read `main.py:20-35`, you see the simplest local usage path. If you read `src/aws_client_service/aws_client_service/main.py:89-199`, you see how the same behaviors look at the HTTP layer. If you read `DESIGN.md:97-178`, you see the contract and the translation story explained directly.
+If you read the `CloudStorageClient` class in the external `cloud_storage_api` package, you learn what the system promises. If you read `main.py:20-35`, you see the simplest local usage path. If you read `src/aws_client_service/aws_client_service/main.py`, you see how the same behaviors look at the HTTP layer. If you read `DESIGN.md`, you see the contract and the translation story explained directly.
 
 That habit will matter a great deal later in the book. Reading code is not only about decoding syntax. It is about identifying centers of gravity. What is stable? What is noisy? What is public? What is private? What is handwritten? What is generated? What is the boundary between one subsystem and another?
 

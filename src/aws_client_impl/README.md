@@ -1,22 +1,23 @@
 # aws_client_impl
 
-AWS S3 implementation of `cloud_storage_client_api`.
+AWS S3 implementation of `cloud_storage_api.CloudStorageClient`.
 
 ## Role
 
-This package is the concrete adapter around `boto3`. Importing it registers the
-local S3-backed implementation with the abstract factory.
+This package is the concrete adapter around `boto3`. It provides
+`get_client_impl()` to create a fully configured S3-backed client.
 
 ## API
 
 `S3Client(region_name="us-east-1")` implements the `CloudStorageClient`
 contract using explicit container/bucket arguments per call:
 
-- `upload_file(container, local_path, remote_path)`
-- `upload_obj(container, file_obj, remote_path)`
-- `download_file(container, object_name, file_name)`
-- `list_files(container, prefix="")`
-- `delete_file(container, object_name)`
+- `upload_file(container, local_path, remote_path) -> ObjectInfo`
+- `upload_obj(container, file_obj, remote_path) -> ObjectInfo`
+- `download_file(container, object_name, file_name) -> ObjectInfo`
+- `list_files(container, prefix) -> list[ObjectInfo]`
+- `delete_file(container, object_name) -> DeleteResult`
+- `get_file_info(container, object_name) -> ObjectInfo`
 
 It also exposes S3-specific helpers not present on the abstract interface:
 
@@ -27,7 +28,7 @@ It also exposes S3-specific helpers not present on the abstract interface:
 ## Dependencies
 
 - `boto3`
-- `cloud-storage-client-api`
+- `cloud-storage-api` (external, via git)
 
 ## Configuration
 
@@ -45,9 +46,8 @@ only used by the repository's `main.py` demo entry point.
 ## Usage
 
 ```python
-import aws_client_impl
-from cloud_storage_client_api.factory import get_client
+from aws_client_impl.s3_client import get_client_impl
 
-client = get_client()
+client = get_client_impl()
 client.upload_file("my-bucket", "local/report.csv", "reports/report.csv")
 ```

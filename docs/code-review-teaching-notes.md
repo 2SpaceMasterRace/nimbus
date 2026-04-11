@@ -129,7 +129,7 @@ In this repo, examples are:
 
 - `aws_client_service`
 - `aws_client_impl`
-- `cloud_storage_client_api`
+- `cloud_storage_api` (external interface package)
 
 Import means:
 "Python, go find this code, load it, run the top-level code, and let me use it."
@@ -137,7 +137,7 @@ Import means:
 Example:
 
 ```python
-import aws_client_impl
+from aws_client_impl.s3_client import get_client_impl
 ```
 
 Python roughly does this:
@@ -151,26 +151,18 @@ Python roughly does this:
 6. Reuse that loaded module later
 ```
 
-That "execute top-level code once" part matters a lot.
-
-Because in your project:
+In this project, each implementation package provides a `get_client_impl()`
+factory function. Callers import and call that factory directly:
 
 ```python
-import aws_client_impl
+from aws_client_impl.s3_client import get_client_impl
+
+client = get_client_impl()  # returns a configured S3Client
 ```
 
-does not just "make names available".
-
-It also causes registration side effects.
-
-That means importing the package runs code that says:
-
-```text
-"Hey global factory, if anyone asks for a CloudStorageClient,
-give them an S3Client."
-```
-
-So this import is important for wiring.
+There is no global registry or side-effect-based wiring. The caller
+explicitly chooses which implementation to use by importing from the
+appropriate package.
 
 Official reference:
 

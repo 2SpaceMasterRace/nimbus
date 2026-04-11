@@ -26,20 +26,19 @@ We welcome contributions of all kinds: bug fixes, new features, documentation im
 
 This library wraps AWS S3 behind a clean, provider-agnostic Python interface. The goal is to let application code work with cloud storage without knowing anything about boto3, regions, or multipart upload mechanics.
 
-The project is split into three packages:
+The project uses three local packages plus an external interface dependency:
 
-- **`cloud_storage_client_api`** — defines the abstract `CloudStorageClient` base class (the contract). No AWS deps, no boto3. Any cloud provider could implement this.
-- **`aws_client_impl`** — the concrete S3 implementation. Uses boto3 under the hood. Wires itself into the interface automatically via **Dependency Injection** when imported.
-- **`aws_client_service`** — a FastAPI HTTP service that exposes `aws_client_impl` over HTTP. Supports file upload, download, and delete via REST endpoints.
+- **`cloud_storage_api`** (external) — defines the abstract `CloudStorageClient` base class, domain types (`ObjectInfo`, `DeleteResult`), and exceptions. No AWS deps, no boto3.
+- **`aws_client_impl`** — the concrete S3 implementation. Uses boto3 under the hood. Provides `get_client_impl()` to create a configured client.
+- **`aws_client_service`** — a FastAPI HTTP service that exposes `aws_client_impl` over HTTP. Supports file upload, download, delete, and metadata retrieval via REST endpoints.
 
-The DI pattern means callers only ever touch the interface:
+Each implementation provides a `get_client_impl()` factory:
 
 ```python
-import aws_client_impl                               # registers S3 as a side effect
-from cloud_storage_client_api.factory import get_client
+from aws_client_impl.s3_client import get_client_impl
 
-client = get_client()                               # returns S3Client, typed as CloudStorageClient
-client.upload_file("report.csv", "reports/q1.csv")
+client = get_client_impl()                          # returns S3Client, typed as CloudStorageClient
+client.upload_file("my-bucket", "report.csv", "reports/q1.csv")
 ```
 
 Swapping to a different provider in the future only requires writing a new implementation package — no application code changes.
@@ -271,18 +270,12 @@ This project uses `ruff` with `select = ["ALL"]` — the strictest ruleset. If y
 ```
 ospsd-team-2/
 ├── src/
-│   ├── cloud_storage_client_api/       # Abstract interface package
-│   │   ├── pyproject.toml
-│   │   └── cloud_storage_client_api/
-│   │       ├── __init__.py
-│   │       ├── client.py               # CloudStorageClient ABC
-│   │       └── factory.py              # register_client() / get_client()
 │   ├── aws_client_impl/                # S3 implementation package
 │   │   ├── pyproject.toml
 │   │   ├── tests/                      # Unit tests for this package
 │   │   └── aws_client_impl/
-│   │       ├── __init__.py             # Registers with factory on import
-│   │       └── s3_client.py            # S3Client implementation
+│   │       ├── __init__.py
+│   │       └── s3_client.py            # S3Client + get_client_impl()
 │   └── aws_client_service/             # FastAPI HTTP service
 │       ├── pyproject.toml
 │       └── aws_client_service/

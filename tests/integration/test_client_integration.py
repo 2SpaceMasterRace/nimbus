@@ -1,8 +1,8 @@
 """Integration tests for client wiring.
 
 This module verifies that the ``get_client_impl`` factory in aws_client_impl
-returns a concrete ``CloudStorageClient`` instance without requiring the old
-DI factory from cloud_storage_client_api.
+returns a concrete ``CloudStorageClient`` instance using the external
+``cloud_storage_api`` contract.
 """
 
 import pytest

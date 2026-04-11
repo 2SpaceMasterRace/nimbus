@@ -397,7 +397,7 @@ A good Harpoon list for this repo might be:
 - `pyproject.toml:15-125`
 - `AGENTS.md:58-129`
 - `src/aws_client_service/aws_client_service/main.py:89-199`
-- `src/cloud_storage_client_api/cloud_storage_client_api/client.py:14-141`
+- `src/aws_client_impl/aws_client_impl/s3_client.py` (the concrete implementation)
 - the docs file you are editing
 
 ### `aerial.nvim`
@@ -512,7 +512,7 @@ Good files to keep close:
 - `README.md:103-149`
 - `AGENTS.md:58-129`
 - `pyproject.toml:15-125`
-- `src/cloud_storage_client_api/cloud_storage_client_api/client.py:14-141`
+- `src/aws_client_impl/aws_client_impl/s3_client.py` (the concrete implementation)
 - `src/aws_client_service/aws_client_service/main.py:77-281`
 - `docs/source/curl-tutorial.md:12-104`
 

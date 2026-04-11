@@ -33,10 +33,9 @@ Unit and integration tests are fully mocked — no credentials needed for those.
 ### Python client
 
 ```python
-import aws_client_impl                              # registers S3 via dependency injection
-from cloud_storage_client_api.factory import get_client
+from aws_client_impl.s3_client import get_client_impl
 
-client = get_client()                              # returns S3Client, typed as CloudStorageClient
+client = get_client_impl()                         # returns S3Client, typed as CloudStorageClient
 files  = client.list_files("my-bucket", "")        # list all objects in your bucket
 client.upload_file("my-bucket", "local/data.csv", "data.csv")
 client.download_file("my-bucket", "data.csv", "local/copy.csv")  # download it back
@@ -45,10 +44,9 @@ client.download_file("my-bucket", "data.csv", "local/copy.csv")  # download it b
 Or use the remote service without changing the calling code:
 
 ```python
-import aws_client_adapter
-from cloud_storage_client_api.factory import get_client
+from aws_client_adapter import get_client_impl
 
-client = get_client()
+client = get_client_impl()
 files = client.list_files("my-bucket", "reports/")
 ```
 
