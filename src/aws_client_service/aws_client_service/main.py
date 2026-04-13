@@ -30,6 +30,7 @@ from starlette.background import BackgroundTask
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
+from ai_server.router import router as ai_router
 from aws_client_service.deps import require_oauth_session
 from aws_client_service.routes.auth import router as auth_router
 
@@ -48,6 +49,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(ai_router, prefix="/ai")
 
 if SPHINX_HTML_DIR.exists():
     app.mount(

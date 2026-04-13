@@ -25,7 +25,10 @@ members = [
     "src/aws_client_impl",
     "src/aws_client_service",
     "src/aws_client_adapter",
-    "src/aws_s3_cloud_storage_service_client"
+    "src/aws_s3_cloud_storage_service_client",
+    "src/ai_client_api",
+    "src/openrouter_ai_client_impl",
+    "src/ai_server",
 ]
 
 [tool.uv.sources]
@@ -33,11 +36,13 @@ aws-client-impl = { workspace = true }
 aws-client-service = { workspace = true }
 aws-client-adapter = { workspace = true }
 aws-s3-cloud-storage-service-client = { workspace = true }
+ai-server = { workspace = true }
 
 [dependency-groups]
 dev = [
     "boto3-stubs>=1.42.54",
     "coverage>=7.13.4",
+    "httpx>=0.27.0",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
     "pytest-cov>=6.0.0",
@@ -63,7 +68,24 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = ["S101", "S105"]
+# Test modules: assertions are the point (S101); stub classes/methods don't
+# need docstrings (D101/D102/D107); magic numbers in assertions are fine
+# (PLR2004); secret-like strings in sample data are not real creds (S105);
+# PT022 triggers on fixtures that yield a value for clarity even without
+# teardown, which is a style choice not a bug.
+# TC002: test imports (pytest, fastapi) are used at runtime, not just for
+# type-checking. PT011/PT018: broad raises and compound assertions are common
+# test idioms. ARG002: pytest fixtures are injected even when only needed for
+# side-effects (e.g. monkeypatching env vars).
+"**/test_*.py" = ["S101", "S105", "PLR2004", "D101", "D102", "D107", "PT022", "TC002", "TC003", "PT011", "PT018", "ARG002", "PLC0415"]
+# conftest.py: fixtures use Any for pytest-injected types (tmp_path, monkeypatch
+# variants); D103/D107 docstrings on fixtures are optional; TC002/TC003 same as tests.
+"**/conftest.py" = ["D102", "D103", "D107", "ANN401", "TC002", "TC003", "ARG002"]
+# CLI scripts intentionally use print for human output; TRY003/EM10* would
+# force every ValueError site to define a helper constant which hurts
+# readability more than it helps. PLR0913 would force kwargs-dict plumbing
+# through the constructor.
+"**/cli.py" = ["T201", "TRY003", "EM101", "EM102", "PLR0913", "PLR0912", "C901", "PLC0415"]
 
 [tool.mypy]
 strict = true

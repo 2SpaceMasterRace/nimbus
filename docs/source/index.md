@@ -10,13 +10,17 @@ It aims to provide a clean, well-documented foundation for collaborative Python 
 New here? Start with the getting started guide to install the package and run your first example.
 
 - {doc}`getting-started`
-- {doc}`curl-tutorial`
 
 ---
 
-## Guide
+## AI Client (Nimbus)
 
-- {doc}`guide/index`
+Talk to the cloud storage backend with an LLM on the OpenRouter free tier.
+
+- {doc}`ai-client-overview`
+- {doc}`ai-client-tutorial`
+- {doc}`ai-client-guardrails`
+- {doc}`ai-client-api`
 
 ---
 
@@ -43,14 +47,16 @@ New here? Start with the getting started guide to install the package and run yo
 :caption: Getting Started
 
 getting-started
-curl-tutorial
 ```
 
 ```{toctree}
 :hidden:
-:caption: Guide
+:caption: AI Client (Nimbus)
 
-guide/index
+ai-client-overview
+ai-client-tutorial
+ai-client-guardrails
+ai-client-api
 ```
 
 ```{toctree}
