@@ -5,6 +5,8 @@ from aws_client_impl.token_store import delete_token, get_token, store_token
 
 from aws_client_impl import token_store
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def clear_store() -> None:

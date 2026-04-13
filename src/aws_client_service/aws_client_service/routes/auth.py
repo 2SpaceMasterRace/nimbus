@@ -3,12 +3,16 @@
 from typing import Annotated
 
 from aws_client_impl.oauth import (
+    OAuthProviderError,
+    OAuthTransportError,
     build_github_auth_url,
     exchange_code_for_token,
     validate_state,
 )
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
+
+from aws_client_service.token_store import create_oauth_session
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -63,8 +67,18 @@ def callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+    except OAuthTransportError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=str(exc),
+        ) from exc
+    except OAuthProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
 
-    request.session["github_access_token"] = access_token
+    request.session["github_session_id"] = create_oauth_session(access_token)
     request.session.pop("oauth_state", None)
 
     return {"message": "OAuth login successful"}

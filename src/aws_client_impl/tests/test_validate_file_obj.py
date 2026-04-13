@@ -10,6 +10,8 @@ from cloud_storage_api import InvalidFileObjectError
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
+pytestmark = pytest.mark.unit
+
 
 def test_validate_file_obj_raises_value_error_when_not_readable(
     mocker: "MockerFixture",  # noqa: ARG001  # pytest-mock fixture injected by pytest; not used directly in this test body
@@ -21,7 +23,8 @@ def test_validate_file_obj_raises_value_error_when_not_readable(
         def readable(self) -> bool:
             return False
 
-        def read(self, n: int = -1) -> bytes:  # noqa: ARG002  # n is required by BinaryIO.read() protocol but intentionally unused in this stub
+        # n is part of the BinaryIO.read() signature; unused in this stub.
+        def read(self, n: int = -1) -> bytes:
             return b""
 
     with pytest.raises(InvalidFileObjectError, match="readable"):

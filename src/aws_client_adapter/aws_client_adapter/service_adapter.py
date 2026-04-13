@@ -33,7 +33,9 @@ from aws_s3_cloud_storage_service_client.models.object_info_response import (
 )
 from aws_s3_cloud_storage_service_client.types import Unset
 from cloud_storage_api import (
+    AuthenticationError,
     CloudStorageClient,
+    ContainerNotFoundError,
     DeleteResult,
     InvalidContainerError,
     InvalidFileObjectError,
@@ -119,11 +121,13 @@ class CloudStorageServiceAdapter(CloudStorageClient):
     ) -> ObjectInfo:
         """Upload a local file to the remote service."""
         try:
-            with Path(local_path).open("rb") as file_obj:
-                return self.upload_obj(container, file_obj, remote_path)
+            file_obj = Path(local_path).open("rb")  # noqa: SIM115  # open must be outside the context manager body that performs the remote upload so transport errors are not misclassified as local file access failures
         except (FileNotFoundError, OSError) as exc:
             msg = f"Cannot read local file '{local_path}'"
             raise LocalFileAccessError(msg) from exc
+
+        with file_obj:
+            return self.upload_obj(container, file_obj, remote_path)
 
     def upload_obj(
         self, container: str, file_obj: BinaryIO, remote_path: str
@@ -307,7 +311,12 @@ class CloudStorageServiceAdapter(CloudStorageClient):
                 raise InvalidFileObjectError(detail)
             raise InvalidObjectNameError(detail)
 
+        if typed_response.status_code == HTTPStatus.UNAUTHORIZED:
+            raise AuthenticationError(detail)
+
         if typed_response.status_code == HTTPStatus.NOT_FOUND:
+            if "container" in lowered_detail or "bucket" in lowered_detail:
+                raise ContainerNotFoundError(detail)
             raise ObjectNotFoundError(detail)
 
         msg = (

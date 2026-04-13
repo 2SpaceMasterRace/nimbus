@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 import structlog
+from ai_server.router import router as ai_router
 from cloud_storage_api import (
     AuthenticationError,
     CloudStorageClient,
@@ -48,6 +49,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(ai_router, prefix="/ai")
 
 if SPHINX_HTML_DIR.exists():
     app.mount(
