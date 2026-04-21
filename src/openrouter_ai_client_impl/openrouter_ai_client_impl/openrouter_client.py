@@ -199,8 +199,7 @@ class OpenRouterClient(AIClient):
 
         # Build pydantic-ai tools that emit our events and populate ``records``.
         pai_tools = [
-            self._make_pai_tool(t, dry_run=dry_run, records=records)
-            for t in tool_tuple
+            self._make_pai_tool(t, dry_run=dry_run, records=records) for t in tool_tuple
         ]
 
         # Get the system prompt from the conversation.

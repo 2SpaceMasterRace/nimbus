@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 import structlog
+from ai_server.router import router as ai_router
 from cloud_storage_api import (
     AuthenticationError,
     CloudStorageClient,
@@ -30,7 +31,6 @@ from starlette.background import BackgroundTask
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
-from ai_server.router import router as ai_router
 from aws_client_service.deps import require_oauth_session
 from aws_client_service.routes.auth import router as auth_router
 

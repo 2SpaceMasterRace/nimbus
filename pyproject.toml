@@ -86,14 +86,36 @@ ignore = [
 # readability more than it helps. PLR0913 would force kwargs-dict plumbing
 # through the constructor.
 "**/cli.py" = ["T201", "TRY003", "EM101", "EM102", "PLR0913", "PLR0912", "C901", "PLC0415"]
+# Benchmark/smoke scripts are CLI tools: print is the output mechanism,
+# magic constants are meaningful benchmark thresholds, complex scoring
+# functions resist decomposition, and backslash continuation in run-with
+# examples is idiomatic reStructuredText.
+"**/scripts/*.py" = [
+    "T201", "PLR2004", "PLR0911", "PLR0912", "C901",
+    "D101", "D102", "D103", "D107",
+    "TRY300", "S110", "FURB171",
+    "RUF001", "E501", "D301",
+]
 
 [tool.mypy]
 strict = true
 ignore_missing_imports = true
+# Test directories across multiple packages share names (e.g. "tests",
+# "test_auth") which causes mypy module-collision errors when the whole
+# tree is checked at once.  pytest uses --import-mode=importlib so no
+# __init__.py is needed; exclude these directories from mypy and rely on
+# pytest + ruff for correctness checks on test code.
+exclude = [
+    "src/.*/tests/",
+    "tests/",
+]
 mypy_path = [
     "src/aws_client_impl",
     "src/aws_client_service",
     "src/aws_client_adapter",
+    "src/ai_server",
+    "src/ai_client_api",
+    "src/openrouter_ai_client_impl",
 ]
 
 [[tool.mypy.overrides]]

@@ -215,9 +215,7 @@ class TestRequestValidation:
     def test_rejects_missing_message(
         self, client: TestClient, auth_headers: dict[str, str]
     ) -> None:
-        resp = client.post(
-            "/ai/chat", json={"session_id": "s1"}, headers=auth_headers
-        )
+        resp = client.post("/ai/chat", json={"session_id": "s1"}, headers=auth_headers)
         assert resp.status_code == 422
 
     def test_rejects_message_over_4096_chars(
@@ -233,9 +231,7 @@ class TestRequestValidation:
     def test_rejects_missing_session_id(
         self, client: TestClient, auth_headers: dict[str, str]
     ) -> None:
-        resp = client.post(
-            "/ai/chat", json={"message": "hi"}, headers=auth_headers
-        )
+        resp = client.post("/ai/chat", json={"message": "hi"}, headers=auth_headers)
         assert resp.status_code == 422
 
     def test_rejects_unsafe_session_id(
@@ -340,9 +336,7 @@ class TestSessionPersistence:
         alice_data = _json.loads(
             (tmp_path / "sessions" / "chan-alice.json").read_text()
         )
-        bob_data = _json.loads(
-            (tmp_path / "sessions" / "chan-bob.json").read_text()
-        )
+        bob_data = _json.loads((tmp_path / "sessions" / "chan-bob.json").read_text())
         alice_msgs = [m["content"] for m in alice_data["messages"]]
         bob_msgs = [m["content"] for m in bob_data["messages"]]
 

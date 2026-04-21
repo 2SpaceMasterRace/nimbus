@@ -42,9 +42,7 @@ class ListFilesArgs(BaseModel):
 
     prefix: str = Field(
         default="",
-        description=(
-            "Optional object-key prefix; empty string lists the bucket root."
-        ),
+        description=("Optional object-key prefix; empty string lists the bucket root."),
         max_length=1024,
     )
 
@@ -99,7 +97,9 @@ def _delete_file(**raw: object) -> dict[str, object]:
     """Validate confirm=true before delegating to storage (even in stub form)."""
     tool = "delete_file"
     try:
-        args = DeleteFileArgs(**raw)
+        # model_validate accepts Any; avoids mypy complaint about
+        # unpacking dict[str, object] into typed keyword arguments.
+        args = DeleteFileArgs.model_validate(dict(raw))
     except ValidationError as exc:
         first = exc.errors()[0]["msg"]
         raise AIToolArgsInvalidError(tool, str(first)) from exc

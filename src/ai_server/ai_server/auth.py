@@ -39,4 +39,4 @@ def require_api_key(
             detail="Invalid or missing API key.",
             headers={"WWW-Authenticate": "API-Key"},
         )
-    return x_api_key  # type: ignore[return-value]  # guarded above
+    return x_api_key

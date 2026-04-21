@@ -129,8 +129,7 @@ class NimbusCLI:
                 conv = Conversation.from_json(data)
             except (OSError, ValueError, json.JSONDecodeError) as err:
                 self._console.print(
-                    f"[{_ERROR_COLOR}]could not load session "
-                    f"'{session_id}': {err}[/]"
+                    f"[{_ERROR_COLOR}]could not load session '{session_id}': {err}[/]"
                 )
             else:
                 # Pin the current system prompt on load so prompt tweaks in
@@ -187,9 +186,7 @@ class NimbusCLI:
                     dry_run=self._dry_run,
                 )
         except AIClientError as err:
-            self._console.print(
-                f"[{_ERROR_COLOR}]{type(err).__name__}:[/] {err}"
-            )
+            self._console.print(f"[{_ERROR_COLOR}]{type(err).__name__}:[/] {err}")
             return
         self._total_input_tokens += response.tokens.input_tokens
         self._total_output_tokens += response.tokens.output_tokens
@@ -299,9 +296,7 @@ class NimbusCLI:
     def _cmd_steps(self, arg: str) -> bool:
         """Show or change the per-request step budget."""
         if not arg:
-            self._console.print(
-                f"[{_INFO_COLOR}]max_steps:[/] {self._max_steps}"
-            )
+            self._console.print(f"[{_INFO_COLOR}]max_steps:[/] {self._max_steps}")
             return True
         try:
             value = int(arg)
@@ -400,9 +395,7 @@ class NimbusCLI:
         if event.kind == "tool_call_started":
             name = payload.get("name")
             args = _short(payload.get("arguments"))
-            prefix = (
-                f"[{_TOOL_DRYRUN_COLOR}]dry-run [/]" if self._dry_run else ""
-            )
+            prefix = f"[{_TOOL_DRYRUN_COLOR}]dry-run [/]" if self._dry_run else ""
             self._console.print(
                 Text.assemble(
                     ("  ● ", _TOOL_CALL_COLOR),

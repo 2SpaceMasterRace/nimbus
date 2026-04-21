@@ -74,22 +74,20 @@ def _main() -> int:
     client.on_event(_listen)
 
     try:
-        response = client.send_message(
-            prompt, tools=tools, max_steps=2, dry_run=True
-        )
+        response = client.send_message(prompt, tools=tools, max_steps=2, dry_run=True)
     except AIClientError as err:
         sys.stderr.write(f"provider error: {err}\n")
         return 2
 
-    sys.stdout.write(f"\nsteps={response.steps} "
-                     f"tokens={response.tokens.total} model={response.model}\n")
+    sys.stdout.write(
+        f"\nsteps={response.steps} "
+        f"tokens={response.tokens.total} model={response.model}\n"
+    )
     sys.stdout.write(f"stop_reason={response.stop_reason}\n")
     if response.tool_calls:
         sys.stdout.write(f"tool_calls: {len(response.tool_calls)}\n")
         for rec in response.tool_calls:
-            sys.stdout.write(
-                f"  {rec.name}({rec.arguments}) success={rec.success}\n"
-            )
+            sys.stdout.write(f"  {rec.name}({rec.arguments}) success={rec.success}\n")
         any_upload = any(rec.name == "upload_file" for rec in response.tool_calls)
         if any_upload:
             sys.stdout.write("\nPASS: model called upload_file\n")

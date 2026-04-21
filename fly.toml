@@ -6,13 +6,25 @@ primary_region = "iad"
 
 [env]
   PORT = "8080"
+  # Session files are written here; the path is mounted from the persistent
+  # volume below so they survive machine restarts.
+  AI_SESSION_DIR = "/data/sessions"
+
+[[mounts]]
+  source      = "nimbus_sessions"
+  destination = "/data"
+  # One volume per machine; with a single machine this gives session
+  # persistence across restarts without needing an external KV store.
 
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "stop"
   auto_start_machines = true
-  min_machines_running = 0
+  # Keep exactly one machine running so all session files live on the same
+  # filesystem.  Scale up and add a shared KV store (Redis / Postgres)
+  # when multi-machine throughput becomes necessary.
+  min_machines_running = 1
   processes = ["app"]
 
 [[http_service.checks]]
