@@ -1,27 +1,41 @@
-# cloud-storage-client-api
+# cloud_storage_client_api
 
-Abstract base class (ABC) defining the contract for a cloud storage client.
+Provider-agnostic abstract contract and domain exceptions for cloud storage.
 
 ## Role
 
-This package provides the **interface** that all cloud storage implementations must follow. It contains no concrete logic — only abstract method signatures and documentation.
+This package defines the public interface that every implementation must honor.
+It contains no FastAPI, boto3, HTTP, or provider-specific types.
 
 ## API
 
-- `CloudStorageClient` — Abstract base class with the following methods:
-  - `upload_file(local_path, remote_path) -> str`
-  - `download_file(remote_path, local_path) -> None`
-  - `list_files(prefix) -> list[str]`
-  - `delete_file(remote_path) -> None`
+`CloudStorageClient` exposes container-scoped object operations:
+
+- `upload_file(container, local_path, remote_path)`
+- `upload_obj(container, file_obj, remote_path)`
+- `download_file(container, object_name, file_name)`
+- `list_files(container, prefix="")`
+- `delete_file(container, object_name)`
+
+The package also exports typed domain exceptions:
+
+- `InvalidContainerError`
+- `InvalidObjectNameError`
+- `InvalidFileObjectError`
+- `ObjectNotFoundError`
+- `StorageBackendError`
 
 ## Dependencies
 
-None — this package is intentionally dependency-free.
+None. This package is intentionally framework-free and implementation-free.
 
 ## Usage
 
 ```python
-from cloud_storage_client_api import CloudStorageClient
+from cloud_storage_client_api.factory import get_client
+
+client = get_client()
+files = client.list_files("my-bucket", "reports/")
 ```
 
-Consumers should type-hint against `CloudStorageClient` and receive a concrete implementation via dependency injection.
+Callers should depend on this package, not on a concrete implementation.

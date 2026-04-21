@@ -1,18 +1,20 @@
-# Configuration file for the Sphinx documentation builder.
-#
-# https://www.sphinx-doc.org/en/master/usage/configuration.html
+"""Configuration file for the Sphinx documentation builder.
+
+For more information, see:
+https://www.sphinx-doc.org/en/master/usage/configuration.html
+"""
 
 # -- Project information -----------------------------------------------------
 
 project = "OSPSD Team 2"
-copyright = (
+copyright = (  # noqa: A001
     "2026, Hari Varsha V, Ajay Temal, Aarav Agrawal, Daniel J. Barros, Nicholas Maspons"
 )
 author = "Hari Varsha V, Ajay Temal, Aarav Agrawal, Daniel J. Barros, Nicholas Maspons"
 
 # -- General configuration ---------------------------------------------------
 
-extensions = ["myst_parser"]
+extensions = ["myst_parser", "sphinx.ext.autodoc"]
 
 myst_enable_extensions = [
     "colon_fence",
@@ -39,5 +41,5 @@ html_sidebars = {
         "sidebar/scroll-start.html",
         "sidebar/navigation.html",
         "sidebar/scroll-end.html",
-    ]
+    ],
 }
