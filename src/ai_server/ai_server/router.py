@@ -118,8 +118,22 @@ def get_ai_client() -> OpenRouterClient:
     """Construct an ``OpenRouterClient`` from the process environment.
 
     Overridden in tests via ``app.dependency_overrides[get_ai_client]``.
+
+    Raises:
+        HTTPException 503: ``OPENROUTER_API_KEY`` is not set.  Raised here
+            (in the dependency, not in the handler) so FastAPI surfaces a
+            clean 503 rather than an unhandled 500, even for requests that
+            would otherwise fail Pydantic validation.
+
     """
-    return OpenRouterClient(OpenRouterConfig.from_env())
+    try:
+        return OpenRouterClient(OpenRouterConfig.from_env())
+    except AIClientConfigError as exc:
+        log.exception("ai_config_error_at_startup", detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI service is misconfigured — check server logs.",
+        ) from exc
 
 
 def _session_dir() -> Path:
@@ -194,6 +208,8 @@ async def chat(
             tools=None,
         )
     except AIClientConfigError as exc:
+        # Can be raised by send_message if the client detects a config problem
+        # at call time (e.g. expired or revoked API key).
         log.exception("ai_config_error", detail=str(exc))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
