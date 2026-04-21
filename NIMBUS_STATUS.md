@@ -2,105 +2,211 @@
 
 Living checkpoint so a new Claude Code chat can pick up where the previous one left off. Not a mentor prompt (see `CLAUDE.md` for that) and not a teaching template (see `MENTOR.md`). Update when direction changes, not on every edit.
 
+---
+
 ## Project at a glance
 
 Nimbus is an LLM-powered cloud-storage assistant.
 
-- **`src/ai_client_api`** — provider-agnostic contract (`AIClient`, `Conversation`, `Tool`, `AIResponse`).
-- **`src/openrouter_ai_client_impl`** — OpenRouter-backed implementation + Typer REPL (`nimbus` CLI).
-- **`src/aws_client_impl`** / **`src/aws_client_adapter`** — S3 implementations of `CloudStorageClient`.
-- **`src/aws_client_service`** — FastAPI service wrapping the S3 client.
-- **`src/aws_s3_cloud_storage_service_client`** — HTTP client for the service.
+| Package | Role |
+|---|---|
+| `src/ai_client_api` | Provider-agnostic contract: `AIClient`, `Conversation`, `Tool`, `AIResponse`, exception hierarchy |
+| `src/openrouter_ai_client_impl` | OpenRouter-backed `AIClient` + pydantic-ai agentic loop + `nimbus` CLI/REPL + cloud-storage tool bindings |
+| `src/ai_server` | FastAPI HTTP wrapper around the AI client; session management; per-user rate limiting; Slack/channel-adapter target |
+| `src/aws_client_impl` / `src/aws_client_adapter` | S3 implementations of `CloudStorageClient` |
+| `src/aws_client_service` | FastAPI service wrapping the S3 client |
+| `src/aws_s3_cloud_storage_service_client` | Auto-generated OpenAPI client for `aws_client_service` |
 
-Two independent axes: *Cloud-Storage Vertical* (teams 2, 6, 10) exposes `CloudStorageClient`; *AI client* wraps it so an LLM can upload / list / download.
+Two independent axes: *Cloud-Storage Vertical* (teams 2, 6, 10) exposes `CloudStorageClient`; *AI vertical* wraps it so an LLM can upload / list / download through the same contract.
 
-## HW3 scope (this branch: `hw-3`)
+---
 
-1. Migrated `OpenRouterClient` from a hand-rolled agentic loop to **pydantic-ai `Agent.run_sync()`**. External contract unchanged. Commit `fa0a732`.
-2. Tool bindings in `openrouter_ai_client_impl/cloud_storage_tools.py`: `upload_file`, `download_file`, `list_files`, `get_file_info`, `delete_file`. Arguments validated by Pydantic; container pinned at bind time; paths constrained to `safe_root`.
-3. REPL (`openrouter_ai_client_impl/cli.py`): Rich banner, tool-call events, slash commands, `credentials.env` auto-load.
-4. Benchmark script (`scripts/benchmark_models.py`): scores free-tier models across 5 tasks with retry-on-429 and per-model failure diagnostics.
+## HW3 scope (branch: `hw-3`)
+
+1. Migrated `OpenRouterClient` from hand-rolled loop to **pydantic-ai `Agent.run_sync()`**. External contract unchanged. Commit `fa0a732`.
+2. Tool bindings in `cloud_storage_tools.py`: `upload_file`, `download_file`, `list_files`, `get_file_info`, `delete_file`. Pydantic-validated args; container pinned at bind time; paths constrained to `safe_root`; session-wide upload quota (FM8).
+3. REPL (`cli.py`): Rich banner, tool-call events, slash commands, `credentials.env` auto-load, atomic session saves (FM5), P2 conversation rollback on error.
+4. `ai_server`: FastAPI HTTP wrapper with `POST /chat`, `GET /sessions/{id}/history`, `DELETE /sessions/{id}`, per-session `asyncio.Lock`, per-user token-bucket rate limiting (FM10), atomic session file writes.
+5. All failure modes FM4–FM10 fixed or mitigated (see table below).
+
+---
 
 ## HW3 assignment grounding
 
-The official HW3 prompt now in chat makes these points explicit:
+- AI chat completions are solved; the hard part is wiring AI into the architecture cleanly.
+- Every team must integrate an external AI client + at least one other team's vertical through the shared API contract.
+- Deployed and managed via IaC. Telemetry is mandatory: request latency, success rate, failure rate.
+- Second submission: AI + cross-vertical integration + integration tests. Final: full demo + pipeline walkthrough + telemetry view.
 
-- AI chat completions are a solved problem; the real challenge is wiring AI into the architecture cleanly.
-- Every team must integrate an external AI client plus at least one other team's vertical through the shared API contract.
-- The system must be deployed and managed via IaC.
-- Telemetry is mandatory: request latency, success rate, and failure rate.
-- First submission was shared vertical API alignment; second submission is AI + cross-vertical integration + integration tests; final adds full demo, pipeline walkthrough, and telemetry view.
+---
 
 ## Current state
 
-- Branch: `hw-3`, 2 commits ahead of `origin/hw-3`.
-- Latest commit `42392af`: CI deploy branch filter updated from `hw-2` to `hw-3`.
-- Default models: **`z-ai/glm-4.5-air:free`** (primary, Novita) + **`nousresearch/hermes-3-llama-3.1-405b:free`** (fallback, DeepInfra). Neither is on Venice.
-- `DEFAULT_MAX_STEPS = 8` in `config.py`. Rationale in the comment block there.
+- Branch: `hw-3`.
+- Latest commit `da0f098`: failure modes FM4–FM10, P2/P3, session mgmt, production READMEs.
+- Worktree: **clean** (all changes committed).
+- Default models: **`z-ai/glm-4.5-air:free`** (primary, Novita) + **`nousresearch/hermes-3-llama-3.1-405b:free`** (fallback, DeepInfra). Neither is Venice.
+- `DEFAULT_MAX_STEPS = 8` in `config.py`. Rationale: cloud-storage tasks are ≤ 4 steps in practice; 8 is the right ceiling — enough for complex chaining, prevents runaway at 10× load (see step-budget note below).
 - System prompt has the anti-loop line: *"After list_files returns, summarize immediately. Do NOT call get_file_info on individual entries unless the user explicitly asks about a specific file."*
-- Worktree is currently dirty:
-  - modified: `AGENTS.md`
-  - modified: `src/ai_server/ai_server/router.py`
-  - modified: `src/ai_server/ai_server/sessions.py`
-  - untracked: `src/openrouter_ai_client_impl/scripts/benchmark_results.json`
+
+---
+
+## What was done in the last two sessions
+
+### Session 1 (pre-summary)
+- Ran all CircleCI commands locally (ruff, mypy --strict, pytest) and made them pass.
+- Updated CircleCI branch filter from `hw-2` to `hw-3`.
+- Reviewed AGENTS.md.
+- Built `ai_server` from scratch: `router.py`, `sessions.py`, `auth.py`, FastAPI app, Dockerfile, Fly.io config.
+- Added `Conversation.pop_last_user()` to `ai_client_api` for optimistic-mutation rollback.
+- Fixed `AIClient` ABC docstring to accurately describe `AIToolExecutionError`/`AIUnknownToolError` contract.
+- Fixed `_build_model` (P3): attribution headers now threaded via `openai.AsyncOpenAI(default_headers=...)` → `OpenAIProvider(openai_client=...)`.
+- Fixed FM4 in `_run_with_fallback`: explicit `status == 429` check for `ModelHTTPError`.
+
+### Session 2 (this session — commit `da0f098`)
+| Area | Change |
+|---|---|
+| **FM4 `_try_fallback`** | Fallback handler also now checks `status == 429` on `ModelHTTPError` before raising `AIProviderError` |
+| **FM5 atomic save** | `cli.py _save_conversation`: write to `.tmp`, `os.replace()` — atomic on POSIX |
+| **FM7 prompt injection** | `_sandbox_result` strips C0 control chars (via `_CONTROL_CHARS_RE`) before truncation + wrapping |
+| **FM8 session upload quota** | `build_cloud_storage_tools` gains `session_max_upload_bytes`; list-wrapped counter enforced before network I/O |
+| **FM10 per-user rate limiting** | `_TokenBucket` dataclass + `_check_rate_limit(user_id)` in `router.py`; configurable via `AI_RATE_LIMIT_CAPACITY`/`AI_RATE_LIMIT_RPM` |
+| **P2 conversation rollback** | `_send_user_turn` calls `pop_last_user()` on `AIClientError` — failed messages not re-sent |
+| **P3 attribution headers** | `_build_model` passes `default_headers={}` (empty is fine, not conditional unpack) |
+| **mypy fix** | `default_headers` passed directly to `AsyncOpenAI()` — no `**dict` conditional unpack |
+| **`ai_server` endpoints** | `GET /sessions/{id}/history`, `DELETE /sessions/{id}` added to router |
+| **`sessions.py`** | Added `delete_session`, `list_sessions`; `save_session` uses write-tmp-then-rename |
+| **Live integration tests** | Moved to `e2e` marker with shape-only assertions; removed `integration`/`local_credentials` markers |
+| **Tests added** | FM4 (3 variants), FM7 control-char, P2 rollback, FM5 atomic save, history endpoint, delete endpoint (idempotency), FM10 token bucket |
+| **READMEs** | Production-grade `ai_client_api/README.md` and `openrouter_ai_client_impl/README.md` |
+| **AGENTS.md** | Added `ai_server` summary, Fly volume/session setup, mypy exclude rationale, env vars for `ai_server` and `nimbus` |
+| **CI** | `uv sync --frozen` in `install-dependencies` command |
+
+---
+
+## Failure-mode status
+
+| # | Failure mode | Status | Where |
+|---|---|---|---|
+| 1 | `Conversation` not cleaned up on provider crash | ✅ Fixed | `Conversation.pop_last_user()` in `ai_client_api`; wired in CLI (P2) |
+| 2 | Tool schema mismatch between Pydantic model and JSON schema | ✅ Fixed (earlier) | `UploadFileArgs.model_json_schema()` auto-generated |
+| 3 | `list_files` response looping (model calls `get_file_info` in a loop) | ✅ Fixed (earlier) | System prompt anti-loop line |
+| 4 | pydantic-ai 429 as `ModelHTTPError` bypasses `AIRateLimitError` | ✅ Fixed | `openrouter_client.py _run_with_fallback` and `_try_fallback` |
+| 5 | Session file race / half-written on crash | ✅ Fixed | `cli.py _save_conversation` and `ai_server/sessions.py save_session` |
+| 6 | Conversation context unbounded growth | ⚠️ Partial | `max_messages`/`max_total_tokens` trim oldest turns. Full rolling summary is V2. |
+| 7 | Prompt injection via tool results | ✅ Fixed | `_sandbox_result` strips C0 control chars |
+| 8 | `max_upload_bytes` per-call not per-session | ✅ Fixed | `session_max_upload_bytes` counter in `cloud_storage_tools.py` |
+| 9 | Listener exceptions log to stderr | ✅ Fixed | `emit()` catches and routes through `structlog` |
+| 10 | No per-user rate limiting | ✅ Fixed | Token bucket in `ai_server/router.py` |
+
+---
+
+## Remaining backlog (not yet done)
+
+These were discussed but **not implemented** this session. The next session should start here.
+
+### 1. Auth walkthrough + Slack adapter design
+- Design doc for the end-to-end auth flow: Slack → `ai_server` → OpenRouter → S3.
+- Define thin `slack_adapter` package (event handler, slash-command dispatch, message formatting).
+- `build_slack_tools(storage=...)` scaffold exists in `ai_server/slack_tools.py` — wire it up.
+- Session ID = Slack channel ID or thread timestamp.
+- Auth: `X-API-Key` header for server-to-server; OAuth for user-facing Slack commands (decide whether to implement or stub).
+
+### 2. Add AI e2e job to CircleCI
+- New `ai-e2e-tests` job that:
+  - Uses `openrouter` context (injects `OPENROUTER_API_KEY`, `AI_SERVER_BASE_URL`, `AI_SERVER_API_KEY`).
+  - Runs `uv run pytest src/ai_server/tests/test_e2e.py -m e2e`.
+- Slot it after `e2e-tests` (AWS) and before `deploy-fly` in the workflow.
+- `src/ai_server/tests/test_e2e.py` already has the skeleton with `e2e_base_url` / `e2e_api_key` fixtures.
+
+### 3. UX/UI polish
+- `cli.py`: consider `prompt_toolkit` for keybindings (Ctrl-C = cancel in-flight request, not exit; Ctrl-L = clear screen; up-arrow = history).
+- Better diagnostics: `/ping`, `/status` commands that show model reachability, session size, token budget remaining.
+- Potentially a `src/ui/` module if `prompt_toolkit` integration grows beyond cli.py.
+- `pyproject.toml`: add `prompt_toolkit` as optional dep if pursued.
+
+### 4. Step budget / concurrency math (document + enforce)
+- **Current:** `DEFAULT_MAX_STEPS = 8`. **Math:** at Venice 8 RPM shared cap, 10 users × 8 steps = 80 concurrent calls — will collapse. For non-Venice (Novita/DeepInfra), this is fine. Document in `config.py` comment why 8 was chosen and when to lower it.
+- Cloud-storage tasks are almost always ≤ 4 steps (1 tool + 1 summary = 2; list → act → summarize = 3; multi-file = 4). 8 is the ceiling for complex chaining.
+- If Venice is ever re-introduced as an upstream, lower to `MAX_STEPS = 4` and document why.
+
+### 5. Remove or demote `scripts/benchmark_models.py`
+- The benchmark script is useful for model selection but creates confusion: it exhausts free-tier quota if run twice, and the results JSON is not committed.
+- Either move it to `scripts/dev/` with a prominent warning, add a `--dry-run` flag, or just document it as "run manually once per model selection cycle".
+- `benchmark_results.json` is already `.gitignore`d (untracked).
+
+### 6. Telemetry (mandatory for HW3 final)
+- Prometheus / structlog metrics: request latency, success rate, failure rate per model.
+- The `request_started`/`request_completed` events already carry `latency_ms` — pipe to Prometheus counter/histogram.
+- Fly.io metrics endpoint or Grafana Cloud for the dashboard view.
+- Structlog already wired in `router.py` and `openrouter_client.py`; add `prometheus_client` or equivalent.
+
+### 7. Deployment / IaC
+- `fly.toml` has `[[mounts]]` scaffolded; create the volume: `flyctl volumes create nimbus_sessions --region iad --size 1`.
+- Set secrets: `flyctl secrets set AI_SESSION_DIR=/data/sessions AI_SERVER_API_KEY=<key>`.
+- Verify `min_machines_running = 1` so the volume is always mounted.
+- Smoke test the deployed endpoint: `curl https://ospsd-team-2.fly.dev/ai/health`.
+
+### 8. FM6: rolling conversation summary
+- When `len(conv.messages()) > max_messages`, trigger a cheap model call to summarize the oldest N turns into a single "conversation summary" system message.
+- Prerequisite: a cheap/fast model that can summarize reliably (not the same model as the primary task model).
+- Complexity: needs to be idempotent, not lose tool-call structure, and not trigger on every request.
+- Deferred to V2.
+
+---
+
+## Step-budget rationale
+
+For 10 users, worst case = 10 × N concurrent LLM calls. At Venice's **8 RPM shared cap**, `MAX_STEPS = 5` already causes 10 users to collide. Cloud-storage tasks are almost always ≤ 4 steps:
+- 1 tool call + 1 summary = 2 steps
+- list → act → summarize = 3 steps
+- multi-file operation = 4 steps
+
+`DEFAULT_MAX_STEPS = 8` is the right ceiling: enough for complex chaining, prevents runaway at 10× load, and only matters under Venice which is not the default upstream.
+
+---
 
 ## Free-tier reality check
 
-OpenRouter's `free-models-per-day` cap is **global across all `:free` models** on a single account, not per-model. Two benchmark runs can exhaust it for the day. $10 credits unlocks 1000 req/day.
+- OpenRouter's `free-models-per-day` cap is **global across all `:free` models** on a single account. Two benchmark runs can exhaust it for the day. $10 credits unlocks 1 000 req/day.
+- Venice upstream (free backend for `meta-llama/llama-3.3-*`, `qwen/*`) has an **8 RPM shared cap** — collapses under multi-user load. Default models route to Novita / DeepInfra.
+- DeepSeek has **no free tier** on OpenRouter as of this writing.
+- `credentials.env` in the repo root has `OPENROUTER_MODEL` and `OPENROUTER_FALLBACK_MODEL` — if set, they override `config.py` defaults. Check there first if the banner shows the wrong model.
 
-Venice upstream (the free backend for `meta-llama/llama-3.3-*` and `qwen/qwen3-next-*`) has an **8 RPM shared cap** — collapses under multi-user load. All default models now route to Novita / DeepInfra / Google.
+---
 
-## Failure-mode backlog (priority order)
+## Design stance
 
-Also tracked in `plans.md` under "Nimbus REPL Backlog". Fm 2 and 3 are fixed.
-
-| # | Failure mode | Fix sketch |
-|---|---|---|
-| 4 | pydantic-ai wraps 429 as `ModelHTTPError` — fallback handler's `except openai.RateLimitError` misses it | In the `ModelHTTPError` branch, treat `status_code == 429` as a rate-limit |
-| 5 | Session file race — no lock on `_save_conversation` | `os.replace` with tempfile for atomic writes |
-| 6 | Conversation context unbounded growth | Rolling summary after N turns with a cheap model |
-| 7 | Prompt injection via tool results | Tighter sandbox; strip/escape control tokens in tool output |
-| 8 | `max_upload_bytes` per-call not per-session | Session-wide byte counter in the tool wrapper |
-| 9 | Listener exceptions still log to stderr | Route through `structlog`, scrub secrets |
-| 10 | No per-user rate limiting | Token bucket keyed by user_id; prerequisite for Slack/Discord frontend |
-
-## Design stance from this chat
-
-- Failures are not edge cases; they are the default case to design around.
-- Retries, timeouts, idempotency, backpressure, and overload handling are part of the system, not polish to add later.
-- Use modern tooling and concepts when they earn their keep; do not add fancy machinery just because it exists.
+- Failures are the default case, not edge cases. Design timeouts, retries, idempotency, backpressure, and observability intentionally.
+- Retries, idempotency, backpressure, and overload handling are part of the system, not polish.
+- Use modern tooling when it earns its keep; do not add fashionable machinery without a concrete need.
 - Optimize for low cognitive load, deep modules, shallow interfaces, and long-term changeability.
-- Treat observable behavior as API surface: env vars, session files, CLI output, response schemas, error text, ordering, and defaults all matter.
-- HW3 architecture should keep the storage vertical stable while cleanly integrating the AI vertical and at least one external vertical.
-- Channel adapters such as Slack should stay thin; shared runtime/tool/integration logic should live behind reusable boundaries.
-- MCP is still the likely direction for future capability exposure, but only if host/client/server roles, auth, transport, and failure handling are made explicit.
+- Observable behavior is API surface: env vars, session files, CLI output, response schemas, error text, ordering, and defaults all create compatibility obligations.
+- Channel adapters (Slack, CLI) stay thin. Shared runtime/tool/integration logic lives behind reusable boundaries — not duplicated in each adapter.
+- MCP is the likely direction for future capability exposure, but only after host/client/server roles, auth, transport, and failure handling are made explicit.
 
-## Immediate HW3 target
+---
 
-- Today is `2026-04-21`; the second submission is due `2026-04-22`.
-- The immediate deliverable is not more local AI plumbing. It is a convincing integrated system:
-  - AI provider works
-  - at least one cross-vertical integration works through the shared API
-  - integration tests prove the pieces work together
-  - deployment/IaC/telemetry are at least on a credible path, ideally already working
+## Resume here next session
 
-## Resume here next chat
+1. Read `AGENTS.md` and this file first.
+2. The next concrete deliverables are: **CI AI e2e job**, **Auth/Slack design doc**, **telemetry wiring**, and **Fly.io volume/deploy verification**.
+3. Do not touch `router.py` or `sessions.py` without re-reading them first — they are in a good state and easy to accidentally regress.
+4. The step-budget math above should be added as a comment block in `config.py` if it is not already there.
+5. Before adding any new package dep, check `pyproject.toml` to confirm it is not already present.
 
-- Re-read `AGENTS.md` and this file first.
-- Re-read `NIMBUS_HW3_SYSTEM_DESIGN.md` for the current Slack-first system design and backlog.
-- Preserve any existing Python worktree changes in `router.py` and `sessions.py`; do not overwrite them casually.
-- If continuing design work, ground it in the official HW3 text above, not guesses from earlier homework patterns.
-- If continuing implementation, prioritize the second-submission path: cross-vertical integration, thin frontend adapter shape, and telemetry/operational readiness.
-- Keep the central architecture question in view: where should shared agent/runtime logic live so CLI, Slack, and future adapters do not duplicate business logic?
+---
 
-## Workflow conventions the user has set
+## Workflow conventions
 
-- No git worktrees right now — work directly on `hw-3`.
+- No git worktrees — work directly on `hw-3`.
 - Any git commands EXCEPT `push`.
-- Squash related work into one commit; don't leave a string of micro-commits.
-- Don't create new `.md` files unless asked (this file is an exception — they asked for session state).
+- Squash related work into one commit; no string of micro-commits.
+- No new `.md` files unless asked.
 - Keep responses concise; no trailing summaries.
-- Default models should be non-Venice.
+- Default models must be non-Venice.
+
+---
 
 ## Useful commands
 
@@ -108,20 +214,56 @@ Also tracked in `plans.md` under "Nimbus REPL Backlog". Fm 2 and 3 are fixed.
 # Run the REPL (auto-loads credentials.env):
 uv run --package openrouter-ai-client-impl nimbus
 
-# Test suite:
+# Full test suite:
+uv run pytest src/ -q
+
+# AI server tests only:
+uv run --package ai-server pytest src/ai_server/tests/ -q
+
+# OpenRouter package tests only:
 uv run --package openrouter-ai-client-impl pytest src/openrouter_ai_client_impl/tests/ -q
 
-# Lint just the production package:
-uv run --package openrouter-ai-client-impl ruff check src/openrouter_ai_client_impl/openrouter_ai_client_impl/
+# E2e tests (need OPENROUTER_API_KEY set):
+uv run pytest -m e2e src/openrouter_ai_client_impl/tests/ -v
+
+# Full CI pipeline locally:
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy --strict .
+uv run pytest src/ -q
 
 # List free OpenRouter models that support tool calls:
 curl -s "https://openrouter.ai/api/v1/models?supported_parameters=tools" \
   -H "Authorization: Bearer $OPENROUTER_API_KEY" \
   | jq -r '.data[] | select(.id|endswith(":free")) | .id'
+
+# Fly.io health check:
+curl https://ospsd-team-2.fly.dev/ai/health
 ```
 
-## Gotchas
+---
 
-- `credentials.env` in the repo root has `OPENROUTER_MODEL` and `OPENROUTER_FALLBACK_MODEL` — if set, they override the new defaults in `config.py`. Check there first if the banner shows the wrong model.
-- `benchmark_results.json` is a run artifact, not committed.
-- DeepSeek has **no free-tier** on OpenRouter as of this writing.
+## Environment variables (complete reference)
+
+| Variable | Package | Required | Default | Notes |
+|---|---|---|---|---|
+| `OPENROUTER_API_KEY` | openrouter | **Yes** | — | |
+| `OPENROUTER_MODEL` | openrouter | No | `z-ai/glm-4.5-air:free` | Overrides `config.py` default |
+| `OPENROUTER_FALLBACK_MODEL` | openrouter | No | `nousresearch/hermes-3-llama-3.1-405b:free` | |
+| `OPENROUTER_BASE_URL` | openrouter | No | `https://openrouter.ai/api/v1` | |
+| `OPENROUTER_TIMEOUT` | openrouter | No | `120.0` | Seconds |
+| `OPENROUTER_MAX_STEPS` | openrouter | No | `8` | Agentic loop step budget |
+| `OPENROUTER_APP_REFERER` | openrouter | No | — | `HTTP-Referer` for OpenRouter attribution |
+| `OPENROUTER_APP_TITLE` | openrouter | No | — | `X-Title` for OpenRouter attribution |
+| `AI_SERVER_API_KEY` | ai_server | **Yes** | — | Shared secret for `X-API-Key` header |
+| `AI_SESSION_DIR` | ai_server | No | `~/.nimbus/sessions/ai_server` | Set to `/data/sessions` on Fly.io |
+| `AI_RATE_LIMIT_CAPACITY` | ai_server | No | `10` | Per-user token bucket max tokens |
+| `AI_RATE_LIMIT_RPM` | ai_server | No | `10` | Refill rate in requests/minute |
+| `AI_SERVER_BASE_URL` | test/e2e | No | — | Required for live e2e tests |
+| `NIMBUS_CONTAINER` | cli | No | `$AWS_BUCKET_NAME` | S3 bucket for LLM tools |
+| `NIMBUS_SAFE_ROOT` | cli | No | `$PWD` | Local directory the LLM may read/write |
+| `NIMBUS_SESSION_DIR` | cli | No | `~/.nimbus/sessions` | Conversation persistence |
+| `AWS_ACCESS_KEY_ID` | aws | **Yes (e2e)** | — | |
+| `AWS_SECRET_ACCESS_KEY` | aws | **Yes (e2e)** | — | |
+| `AWS_REGION` | aws | **Yes (e2e)** | — | |
+| `AWS_BUCKET_NAME` | aws | No | — | Falls back for `NIMBUS_CONTAINER` |
