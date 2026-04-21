@@ -8,13 +8,13 @@ from typing import Annotated, Any
 import structlog
 from cloud_storage_client_api.client import CloudStorageClient
 from cloud_storage_client_api.exceptions import (
+    ContainerNotFoundError,
     InvalidContainerError,
     InvalidFileObjectError,
     InvalidObjectNameError,
     ObjectNotFoundError,
     StorageBackendError,
 )
-from cloud_storage_client_api.factory import get_client
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
 from fastapi import Path as ApiPath
@@ -29,8 +29,7 @@ from aws_client_service.routes.auth import router as auth_router
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
-
-import aws_client_impl  # noqa: E402, F401  # triggers dependency injection after env loading
+from aws_client_impl.s3_client import get_client_impl  # noqa: E402, I001  # load_dotenv must run before importing the concrete client module
 
 log: Any = structlog.get_logger()
 
@@ -66,7 +65,7 @@ class ListFilesResponse(BaseModel):
 
 def get_storage_client() -> CloudStorageClient:
     """Dependency that provides a CloudStorageClient instance."""
-    return get_client()
+    return get_client_impl()
 
 
 def remove_temp_file(path: str) -> None:
@@ -118,6 +117,8 @@ def upload_object(
         InvalidObjectNameError,
     ) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ContainerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except StorageBackendError as exc:
         log.exception(
             "Upload failed",
@@ -171,7 +172,7 @@ def download_file(
     except (InvalidContainerError, InvalidObjectNameError) as exc:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ObjectNotFoundError as exc:
+    except (ObjectNotFoundError, ContainerNotFoundError) as exc:
         Path(tmp_path).unlink(missing_ok=True)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except StorageBackendError as exc:
@@ -226,7 +227,7 @@ def delete_object(
         ok = client.delete_file(container, object_name)
     except (InvalidContainerError, InvalidObjectNameError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ObjectNotFoundError as exc:
+    except (ObjectNotFoundError, ContainerNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except StorageBackendError as exc:
         log.exception(
@@ -271,6 +272,8 @@ def list_files(
         files = client.list_files(container, prefix)
     except InvalidContainerError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ContainerNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except StorageBackendError as exc:
         log.exception("List files failed", container=container, prefix=prefix)
         raise HTTPException(

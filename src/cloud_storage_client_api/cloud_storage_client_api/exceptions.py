@@ -15,6 +15,10 @@ class InvalidContainerError(CloudStorageError, ValueError):
     """Raised when a container or bucket name is invalid."""
 
 
+class ContainerNotFoundError(CloudStorageError, FileNotFoundError):
+    """Raised when a requested container or bucket does not exist."""
+
+
 class InvalidObjectNameError(CloudStorageError, ValueError):
     """Raised when an object key or path is invalid."""
 

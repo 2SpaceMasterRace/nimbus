@@ -8,17 +8,17 @@ We welcome contributions of all kinds: bug fixes, new features, documentation im
 
 ## Table of Contents
 
-1. [What This Project Does](#what-this-project-does)
-2. [Environment Setup](#environment-setup)
-3. [AWS Credentials](#aws-credentials)
-4. [Running the Code](#running-the-code)
-5. [Running Tests](#running-tests)
-6. [Linting and Type Checking](#linting-and-type-checking)
-7. [Project Structure](#project-structure)
-8. [Making Changes](#making-changes)
-9. [Opening a Pull Request](#opening-a-pull-request)
-10. [Reporting Issues](#reporting-issues)
-11. [CI/CD](#cicd)
+1. What This Project Does
+2. Environment Setup
+3. AWS Credentials
+4. Running the Code
+5. Running Tests
+6. Linting and Type Checking
+7. Project Structure
+8. Making Changes
+9. Opening a Pull Request
+10. Reporting Issues
+11. CI/CD
 
 ---
 
@@ -105,6 +105,7 @@ export AWS_ACCESS_KEY_ID="AKIA..."
 export AWS_SECRET_ACCESS_KEY="your_secret"
 export AWS_REGION="us-east-1"
 export AWS_BUCKET_NAME="your-test-bucket"
+export OAUTH_SESSION_STORE_DIR="/tmp/ospsd-oauth-sessions"
 ```
 
 For convenience, create a `.env` file in the repo root (it is in `.gitignore` and will never be committed):

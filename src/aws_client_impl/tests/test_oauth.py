@@ -4,7 +4,10 @@ from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import pytest
+import requests
 from aws_client_impl.oauth import (
+    OAuthProviderError,
+    OAuthTransportError,
     build_github_auth_url,
     exchange_code_for_token,
     validate_state,
@@ -180,3 +183,58 @@ def test_exchange_code_for_token_missing_env_raises(
 
     with pytest.raises(KeyError):
         exchange_code_for_token("some_code")
+
+
+def test_exchange_code_for_token_raises_transport_error_on_timeout(
+    mocker: "MockerFixture",
+    token_env: None,  # noqa: ARG001
+) -> None:
+    """Timeouts are surfaced as OAuthTransportError."""
+    mocker.patch(
+        "aws_client_impl.oauth.requests.post",
+        side_effect=requests.Timeout("timed out"),
+    )
+
+    with pytest.raises(OAuthTransportError, match="timed out"):
+        exchange_code_for_token("auth_code_xyz")
+
+
+def test_exchange_code_for_token_raises_transport_error_on_connection_failure(
+    mocker: "MockerFixture",
+    token_env: None,  # noqa: ARG001
+) -> None:
+    """Connection failures are surfaced as OAuthTransportError."""
+    mocker.patch(
+        "aws_client_impl.oauth.requests.post",
+        side_effect=requests.ConnectionError("boom"),
+    )
+
+    with pytest.raises(OAuthTransportError, match="could not reach"):
+        exchange_code_for_token("auth_code_xyz")
+
+
+def test_exchange_code_for_token_raises_provider_error_on_http_failure(
+    mocker: "MockerFixture",
+    token_env: None,  # noqa: ARG001
+) -> None:
+    """HTTP failures after the request reaches GitHub are provider errors."""
+    mock_response = mocker.Mock()
+    mock_response.raise_for_status.side_effect = requests.HTTPError("bad gateway")
+    mocker.patch("aws_client_impl.oauth.requests.post", return_value=mock_response)
+
+    with pytest.raises(OAuthProviderError, match="transport layer"):
+        exchange_code_for_token("auth_code_xyz")
+
+
+def test_exchange_code_for_token_raises_provider_error_on_invalid_json(
+    mocker: "MockerFixture",
+    token_env: None,  # noqa: ARG001
+) -> None:
+    """Invalid JSON from GitHub is surfaced as OAuthProviderError."""
+    mock_response = mocker.Mock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.side_effect = ValueError("not json")
+    mocker.patch("aws_client_impl.oauth.requests.post", return_value=mock_response)
+
+    with pytest.raises(OAuthProviderError, match="invalid JSON"):
+        exchange_code_for_token("auth_code_xyz")

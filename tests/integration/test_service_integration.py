@@ -12,13 +12,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from aws_client_impl.s3_client import S3Client, get_client_impl
+from aws_client_impl.s3_client import S3Client
 from aws_client_service.main import app, get_storage_client
 from cloud_storage_client_api.client import CloudStorageClient
-from cloud_storage_client_api.factory import register_client
 from starlette.testclient import TestClient
-
-import aws_client_impl  # noqa: F401  — registers S3Client factory as side-effect
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -32,9 +29,8 @@ HTTP_OK = 200
 def test_service_di_returns_cloud_storage_client(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """get_storage_client() returns a concrete CloudStorageClient via the factory."""
+    """get_storage_client() returns a concrete CloudStorageClient directly."""
     monkeypatch.setenv("AWS_REGION", "us-east-1")
-    register_client(get_client_impl)
     client = get_storage_client()
     assert isinstance(client, CloudStorageClient)
     assert isinstance(client, S3Client)

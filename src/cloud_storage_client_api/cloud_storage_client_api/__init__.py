@@ -9,6 +9,9 @@ Public surface:
 from cloud_storage_client_api.client import CloudStorageClient as CloudStorageClient
 from cloud_storage_client_api.exceptions import CloudStorageError as CloudStorageError
 from cloud_storage_client_api.exceptions import (
+    ContainerNotFoundError as ContainerNotFoundError,
+)
+from cloud_storage_client_api.exceptions import (
     InvalidContainerError as InvalidContainerError,
 )
 from cloud_storage_client_api.exceptions import (

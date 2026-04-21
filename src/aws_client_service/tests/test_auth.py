@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
+from aws_client_impl.oauth import OAuthProviderError, OAuthTransportError
 from aws_client_service.deps import require_oauth_session
 from aws_client_service.routes.auth import router as auth_router
 from fastapi import Depends, FastAPI
@@ -17,6 +19,8 @@ HTTP_OK = 200
 HTTP_FOUND = 302
 HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
+HTTP_BAD_GATEWAY = 502
+HTTP_GATEWAY_TIMEOUT = 504
 
 
 def create_test_app() -> FastAPI:
@@ -82,8 +86,10 @@ def test_auth_callback_rejects_invalid_state(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_auth_callback_stores_token_on_success(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Test that /auth/callback succeeds when state matches."""
+    monkeypatch.setenv("OAUTH_SESSION_STORE_DIR", str(tmp_path))
 
     def mock_build_github_auth_url() -> tuple[str, str]:
         return "https://github.com/login/oauth/authorize?state=test-state", "test-state"
@@ -115,6 +121,72 @@ def test_auth_callback_stores_token_on_success(
     protected_response = client.get("/protected")
     assert protected_response.status_code == HTTP_OK
     assert protected_response.json() == {"ok": True}
+    assert "fake-token" not in (client.cookies.get("session") or "")
+    stored_files = list(tmp_path.glob("*.json"))
+    assert len(stored_files) == 1
+    assert "fake-token" in stored_files[0].read_text(encoding="utf-8")
+
+
+def test_auth_callback_maps_transport_timeout_to_504(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timeouts talking to GitHub become 504 responses."""
+
+    def mock_build_github_auth_url() -> tuple[str, str]:
+        return "https://github.com/login/oauth/authorize?state=test-state", "test-state"
+
+    def mock_exchange_code_for_token(_code: str) -> str:
+        msg = "GitHub OAuth token exchange timed out"
+        raise OAuthTransportError(msg)
+
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.build_github_auth_url",
+        mock_build_github_auth_url,
+    )
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.exchange_code_for_token",
+        mock_exchange_code_for_token,
+    )
+
+    client = TestClient(create_test_app())
+    client.get("/auth/login", follow_redirects=False)
+    response = client.get(
+        "/auth/callback",
+        params={"code": "abc123", "state": "test-state"},
+    )
+
+    assert response.status_code == HTTP_GATEWAY_TIMEOUT
+
+
+def test_auth_callback_maps_provider_failure_to_502(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Provider-side OAuth failures become 502 responses."""
+
+    def mock_build_github_auth_url() -> tuple[str, str]:
+        return "https://github.com/login/oauth/authorize?state=test-state", "test-state"
+
+    def mock_exchange_code_for_token(_code: str) -> str:
+        msg = "GitHub OAuth token exchange returned invalid JSON"
+        raise OAuthProviderError(msg)
+
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.build_github_auth_url",
+        mock_build_github_auth_url,
+    )
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.exchange_code_for_token",
+        mock_exchange_code_for_token,
+    )
+
+    client = TestClient(create_test_app())
+    client.get("/auth/login", follow_redirects=False)
+    response = client.get(
+        "/auth/callback",
+        params={"code": "abc123", "state": "test-state"},
+    )
+
+    assert response.status_code == HTTP_BAD_GATEWAY
 
 
 def test_require_oauth_session_accepts_x_api_key(

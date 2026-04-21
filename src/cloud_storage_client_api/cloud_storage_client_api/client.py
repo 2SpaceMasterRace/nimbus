@@ -39,6 +39,7 @@ class CloudStorageClient(ABC):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
+            ContainerNotFoundError: If the target container does not exist.
             InvalidObjectNameError: If remote_path is empty or otherwise invalid.
             FileNotFoundError: If local_path does not exist.
             StorageBackendError: If the backing storage provider fails.
@@ -65,6 +66,7 @@ class CloudStorageClient(ABC):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
+            ContainerNotFoundError: If the target container does not exist.
             InvalidObjectNameError: If remote_path is empty or otherwise invalid.
             InvalidFileObjectError: If file_obj is invalid.
             StorageBackendError: If the backing storage provider fails.
@@ -91,6 +93,7 @@ class CloudStorageClient(ABC):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
+            ContainerNotFoundError: If the target container does not exist.
             InvalidObjectNameError: If object_name is empty or otherwise invalid.
             ObjectNotFoundError: If the requested object does not exist.
             StorageBackendError: If the backing storage provider fails.
@@ -111,6 +114,7 @@ class CloudStorageClient(ABC):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
+            ContainerNotFoundError: If the target container does not exist.
             StorageBackendError: If the backing storage provider fails.
 
         """
@@ -133,6 +137,7 @@ class CloudStorageClient(ABC):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
+            ContainerNotFoundError: If the target container does not exist.
             InvalidObjectNameError: If object_name is empty or otherwise invalid.
             ObjectNotFoundError: If the requested object does not exist.
             StorageBackendError: If the backing storage provider fails.

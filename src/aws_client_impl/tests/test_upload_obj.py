@@ -76,7 +76,7 @@ def test_upload_obj_calls_multipart_when_unseekable(
         def readable(self) -> bool:
             return True
 
-        def read(self, n: int = -1) -> bytes:  # noqa: ARG002  # n is required by BinaryIO.read() protocol but intentionally unused in this stub
+        def read(self, n: int = -1) -> bytes:
             return b""  # no content needed for this unit test
 
         def seekable(self) -> bool:

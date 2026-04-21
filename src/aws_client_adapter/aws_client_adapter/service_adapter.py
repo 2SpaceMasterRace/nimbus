@@ -28,6 +28,7 @@ from aws_s3_cloud_storage_service_client.models.list_files_response import (
 from aws_s3_cloud_storage_service_client.models.operation_result import OperationResult
 from cloud_storage_client_api.client import CloudStorageClient
 from cloud_storage_client_api.exceptions import (
+    ContainerNotFoundError,
     InvalidContainerError,
     InvalidFileObjectError,
     InvalidObjectNameError,
@@ -226,6 +227,8 @@ class CloudStorageServiceAdapter(CloudStorageClient):
             raise InvalidObjectNameError(detail)
 
         if typed_response.status_code == HTTPStatus.NOT_FOUND:
+            if "container" in lowered_detail or "bucket" in lowered_detail:
+                raise ContainerNotFoundError(detail)
             raise ObjectNotFoundError(detail)
 
         msg = (

@@ -21,7 +21,7 @@ def test_validate_file_obj_raises_value_error_when_not_readable(
         def readable(self) -> bool:
             return False
 
-        def read(self, n: int = -1) -> bytes:  # noqa: ARG002  # n is required by BinaryIO.read() protocol but intentionally unused in this stub
+        def read(self, n: int = -1) -> bytes:
             return b""
 
     with pytest.raises(InvalidFileObjectError, match="readable"):

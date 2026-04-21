@@ -11,6 +11,7 @@ import structlog
 from botocore.exceptions import ClientError
 from cloud_storage_client_api.client import CloudStorageClient
 from cloud_storage_client_api.exceptions import (
+    ContainerNotFoundError,
     InvalidContainerError,
     InvalidFileObjectError,
     InvalidObjectNameError,
@@ -776,15 +777,19 @@ class S3Client(CloudStorageClient):
         *,
         container: str,
         key: str | None = None,
-    ) -> StorageBackendError | ObjectNotFoundError:
+    ) -> ContainerNotFoundError | StorageBackendError | ObjectNotFoundError:
         """Convert boto3 errors into provider-agnostic domain exceptions."""
         error = exc.response.get("Error", {})
         error_code = str(error.get("Code", "")).lower()
-        if error_code in {"404", "nosuchkey", "nosuchbucket", "notfound"}:
+        if error_code == "nosuchbucket":
+            msg = f"Container '{container}' was not found"
+            return ContainerNotFoundError(msg)
+
+        if error_code in {"404", "nosuchkey", "notfound"}:
             if key is None:
                 msg = f"Container '{container}' was not found"
-            else:
-                msg = f"Object '{key}' was not found in container '{container}'"
+                return ContainerNotFoundError(msg)
+            msg = f"Object '{key}' was not found in container '{container}'"
             return ObjectNotFoundError(msg)
 
         if key is None:

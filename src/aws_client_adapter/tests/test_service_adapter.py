@@ -13,6 +13,7 @@ from aws_s3_cloud_storage_service_client.models.list_files_response import (
 from aws_s3_cloud_storage_service_client.models.operation_result import OperationResult
 from aws_s3_cloud_storage_service_client.types import Response
 from cloud_storage_client_api.exceptions import (
+    ContainerNotFoundError,
     InvalidContainerError,
     ObjectNotFoundError,
 )
@@ -128,6 +129,23 @@ def test_delete_file_maps_not_found_to_domain_exception(
 
     with pytest.raises(ObjectNotFoundError, match="Object was missing"):
         adapter.delete_file("docs-bucket", "docs/a.txt")
+
+
+def test_list_files_maps_missing_container_to_domain_exception(
+    mocker: MockerFixture,
+) -> None:
+    """A 404 for a missing container maps to ContainerNotFoundError."""
+    mocker.patch(
+        "aws_client_adapter.service_adapter.list_files_api.sync_detailed",
+        return_value=_response(
+            HTTPStatus.NOT_FOUND,
+            content=b'{"detail":"Container was not found"}',
+        ),
+    )
+    adapter = _make_adapter()
+
+    with pytest.raises(ContainerNotFoundError, match="Container was not found"):
+        adapter.list_files("docs-bucket", "")
 
 
 def test_list_files_maps_bad_container_validation_error(

@@ -64,7 +64,15 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = ["S101", "S105"]
+# Test modules: assertions are the point (S101); stub classes/methods don't
+# need docstrings (D101/D102/D107); magic numbers in assertions are fine
+# (PLR2004); secret-like strings in sample data are not real creds (S105);
+# PT022 triggers on fixtures that yield a value for clarity even without
+# teardown, which is a style choice not a bug. TC002/TC003: pytest/fastapi
+# imports are often runtime, not type-only. PT011/PT018: common pytest idioms.
+# ARG002: pytest fixtures are injected for side-effects.
+"**/test_*.py" = ["S101", "S105", "PLR2004", "D101", "D102", "D107", "PT022", "TC002", "TC003", "PT011", "PT018", "ARG002", "PLC0415"]
+"**/conftest.py" = ["D102", "D103", "D107", "ANN401", "TC002", "TC003", "ARG002"]
 
 [tool.mypy]
 strict = true
@@ -74,6 +82,7 @@ mypy_path = [
     "src/cloud_storage_client_api",
     "src/aws_client_service",
     "src/aws_client_adapter",
+    "src/aws_s3_cloud_storage_service_client",
 ]
 
 [[tool.mypy.overrides]]
@@ -86,6 +95,13 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["aws_s3_cloud_storage_service_client.*"]
+# Generated client code is kept in the repo as a build artifact and runtime
+# dependency, but it is not hand-authored domain logic. Keep it visible to mypy
+# via mypy_path, while explicitly opting it out of strict checking.
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src/*/tests"]
