@@ -21,13 +21,28 @@ Two independent axes: *Cloud-Storage Vertical* (teams 2, 6, 10) exposes `CloudSt
 3. REPL (`openrouter_ai_client_impl/cli.py`): Rich banner, tool-call events, slash commands, `credentials.env` auto-load.
 4. Benchmark script (`scripts/benchmark_models.py`): scores free-tier models across 5 tasks with retry-on-429 and per-model failure diagnostics.
 
+## HW3 assignment grounding
+
+The official HW3 prompt now in chat makes these points explicit:
+
+- AI chat completions are a solved problem; the real challenge is wiring AI into the architecture cleanly.
+- Every team must integrate an external AI client plus at least one other team's vertical through the shared API contract.
+- The system must be deployed and managed via IaC.
+- Telemetry is mandatory: request latency, success rate, and failure rate.
+- First submission was shared vertical API alignment; second submission is AI + cross-vertical integration + integration tests; final adds full demo, pipeline walkthrough, and telemetry view.
+
 ## Current state
 
-- Branch: `hw-3`, 7 commits ahead of `origin/hw-3`.
-- Latest commit `fa0a732`: pydantic-ai migration + step budget raised to 8 + system prompt loop fix + CLI model switching (`/model`, `/fallback`, `/models`, `/steps`) + `--model` / `--fallback` / `--max-steps` flags.
+- Branch: `hw-3`, 2 commits ahead of `origin/hw-3`.
+- Latest commit `42392af`: CI deploy branch filter updated from `hw-2` to `hw-3`.
 - Default models: **`z-ai/glm-4.5-air:free`** (primary, Novita) + **`nousresearch/hermes-3-llama-3.1-405b:free`** (fallback, DeepInfra). Neither is on Venice.
 - `DEFAULT_MAX_STEPS = 8` in `config.py`. Rationale in the comment block there.
 - System prompt has the anti-loop line: *"After list_files returns, summarize immediately. Do NOT call get_file_info on individual entries unless the user explicitly asks about a specific file."*
+- Worktree is currently dirty:
+  - modified: `AGENTS.md`
+  - modified: `src/ai_server/ai_server/router.py`
+  - modified: `src/ai_server/ai_server/sessions.py`
+  - untracked: `src/openrouter_ai_client_impl/scripts/benchmark_results.json`
 
 ## Free-tier reality check
 
@@ -49,10 +64,34 @@ Also tracked in `plans.md` under "Nimbus REPL Backlog". Fm 2 and 3 are fixed.
 | 9 | Listener exceptions still log to stderr | Route through `structlog`, scrub secrets |
 | 10 | No per-user rate limiting | Token bucket keyed by user_id; prerequisite for Slack/Discord frontend |
 
-## Task 4 (design conversation, not implementation)
+## Design stance from this chat
 
-- How auth flows between user → Nimbus → OpenRouter → AWS without exposing user creds.
-- How to plug in a Slack / Discord frontend given the Chat Shared-API at https://github.com/HarshithKoriRaj/Shared-API.
+- Failures are not edge cases; they are the default case to design around.
+- Retries, timeouts, idempotency, backpressure, and overload handling are part of the system, not polish to add later.
+- Use modern tooling and concepts when they earn their keep; do not add fancy machinery just because it exists.
+- Optimize for low cognitive load, deep modules, shallow interfaces, and long-term changeability.
+- Treat observable behavior as API surface: env vars, session files, CLI output, response schemas, error text, ordering, and defaults all matter.
+- HW3 architecture should keep the storage vertical stable while cleanly integrating the AI vertical and at least one external vertical.
+- Channel adapters such as Slack should stay thin; shared runtime/tool/integration logic should live behind reusable boundaries.
+- MCP is still the likely direction for future capability exposure, but only if host/client/server roles, auth, transport, and failure handling are made explicit.
+
+## Immediate HW3 target
+
+- Today is `2026-04-21`; the second submission is due `2026-04-22`.
+- The immediate deliverable is not more local AI plumbing. It is a convincing integrated system:
+  - AI provider works
+  - at least one cross-vertical integration works through the shared API
+  - integration tests prove the pieces work together
+  - deployment/IaC/telemetry are at least on a credible path, ideally already working
+
+## Resume here next chat
+
+- Re-read `AGENTS.md` and this file first.
+- Re-read `NIMBUS_HW3_SYSTEM_DESIGN.md` for the current Slack-first system design and backlog.
+- Preserve any existing Python worktree changes in `router.py` and `sessions.py`; do not overwrite them casually.
+- If continuing design work, ground it in the official HW3 text above, not guesses from earlier homework patterns.
+- If continuing implementation, prioritize the second-submission path: cross-vertical integration, thin frontend adapter shape, and telemetry/operational readiness.
+- Keep the central architecture question in view: where should shared agent/runtime logic live so CLI, Slack, and future adapters do not duplicate business logic?
 
 ## Workflow conventions the user has set
 

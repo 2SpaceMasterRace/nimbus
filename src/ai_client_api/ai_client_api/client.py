@@ -62,9 +62,17 @@ class AIClient(ABC):
             AIProviderError: Provider returned a non-auth, non-rate-limit error.
             AITimeoutError: The request exceeded the configured timeout.
             AIStepBudgetExceededError: Loop exceeded ``max_steps``.
-            AIToolArgsInvalidError: Model repeatedly produced invalid tool args.
+            AIToolArgsInvalidError: Model produced args that failed schema
+                validation.  Implementations MAY raise this or feed the
+                validation error back to the model as a tool result.
             AIToolExecutionError: Tool handler raised during execution.
-            AIUnknownToolError: Model called a tool not in ``tools``.
+                Implementations MAY raise this or feed the error string back
+                to the model so it can self-correct on the next step.
+                The current ``OpenRouterClient`` feeds errors back rather
+                than raising, so callers should not rely on this being raised.
+            AIUnknownToolError: Model called a tool not present in ``tools``.
+                Implementations backed by pydantic-ai will never raise this
+                because the framework only exposes registered tools.
 
         """
         raise NotImplementedError

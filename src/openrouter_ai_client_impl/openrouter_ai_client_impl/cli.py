@@ -140,9 +140,14 @@ class NimbusCLI:
         return Conversation(system=self._system_prompt, session_id=session_id)
 
     def _save_conversation(self) -> None:
+        """Persist the conversation atomically (FM5: no half-written files on crash)."""
         path = self._conv_path(self._session_id)
+        tmp = path.with_suffix(".tmp")
         try:
-            path.write_text(json.dumps(self._conversation.to_json(), indent=2))
+            tmp.write_text(
+                json.dumps(self._conversation.to_json(), indent=2), encoding="utf-8"
+            )
+            tmp.replace(path)  # atomic on POSIX; near-atomic on Windows
         except OSError as err:
             self._console.print(f"[{_ERROR_COLOR}]could not save session: {err}[/]")
 
@@ -186,6 +191,9 @@ class NimbusCLI:
                     dry_run=self._dry_run,
                 )
         except AIClientError as err:
+            # Roll back the optimistic user-message append so the failed
+            # message is not re-sent on the next request (P2).
+            self._conversation.pop_last_user()
             self._console.print(f"[{_ERROR_COLOR}]{type(err).__name__}:[/] {err}")
             return
         self._total_input_tokens += response.tokens.input_tokens

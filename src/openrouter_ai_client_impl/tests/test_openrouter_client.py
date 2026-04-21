@@ -413,6 +413,71 @@ def test_sandbox_wraps_and_truncates() -> None:
     assert "truncated" in huge
 
 
+def test_sandbox_strips_control_characters() -> None:
+    """FM7: ASCII control characters are stripped before the model sees the result."""
+    # Build a string with a mix of safe whitespace and unsafe control chars.
+    text = "safe\x00text\x01with\x07bells\x1bESC\x7fDEL\nnewline\ttab"
+    result = _sandbox_result(text)
+    # Safe whitespace (newline, tab) is preserved.
+    assert "\n" in result
+    assert "\t" in result
+    # Unsafe control chars are gone.
+    assert "\x00" not in result
+    assert "\x01" not in result
+    assert "\x07" not in result
+    assert "\x1b" not in result
+    assert "\x7f" not in result
+
+
+# ---------------------------------------------------------------------------
+# FM4: ModelHTTPError 429 is treated as rate-limit, not provider error
+# ---------------------------------------------------------------------------
+
+
+def test_model_http_error_429_raises_rate_limit_error() -> None:
+    """FM4: ModelHTTPError(429) must surface as AIRateLimitError."""
+    err = ModelHTTPError(status_code=429, model_name="primary/model:free", body="limit")
+    client = _client(_error_model(err), fallback_model=None)
+
+    with pytest.raises(AIRateLimitError):
+        client.send_message("hi")
+
+
+def test_model_http_error_429_triggers_fallback() -> None:
+    """FM4: a 429 ModelHTTPError on the primary triggers the fallback model."""
+    err = ModelHTTPError(status_code=429, model_name="primary/model:free", body="limit")
+    primary = _error_model(err)
+    fallback = _text_model("recovered from 429")
+
+    events: list[AgentEvent] = []
+    client = _client(primary, pai_fallback_model=fallback)
+    client.on_event(events.append)
+
+    response = client.send_message("hi")
+
+    assert response.text == "recovered from 429"
+    assert response.fallback_used is True
+    fallback_events = [e for e in events if e.kind == "model_fallback"]
+    assert fallback_events[0].payload["reason"] == "rate_limit"
+
+
+def test_fallback_model_http_error_429_raises_rate_limit_error() -> None:
+    """FM4: fallback ModelHTTPError(429) also raises AIRateLimitError."""
+    primary_err = ModelHTTPError(
+        status_code=429, model_name="primary/model:free", body="limit"
+    )
+    fallback_err = ModelHTTPError(
+        status_code=429, model_name="fallback/model:free", body="also limited"
+    )
+    client = _client(
+        _error_model(primary_err),
+        pai_fallback_model=_error_model(fallback_err),
+    )
+
+    with pytest.raises(AIRateLimitError):
+        client.send_message("hi")
+
+
 # ---------------------------------------------------------------------------
 # Listener resilience
 # ---------------------------------------------------------------------------

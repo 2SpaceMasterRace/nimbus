@@ -32,9 +32,14 @@ from ai_client_api import AIToolArgsInvalidError, Tool
 if TYPE_CHECKING:
     from cloud_storage_api import CloudStorageClient
 
-# The cap applies to both upload source files and download targets. Set a
-# low default so the LLM cannot accidentally ask for a 1 TB object.
+# Per-file upload cap.  Set a low default so the LLM cannot accidentally ask
+# for a 1 TB object.
 DEFAULT_MAX_UPLOAD_BYTES = 100 * 1024 * 1024
+
+# Per-session upload cap.  Once the agentic loop has uploaded this many bytes
+# in aggregate, further uploads are refused until a new tool set is bound
+# (i.e. a new session).  ``None`` disables the session cap.
+DEFAULT_SESSION_MAX_UPLOAD_BYTES: int | None = None
 
 # List responses can be huge; we trim to this many entries in the
 # model-facing result. The audit record still sees the count summary.
@@ -130,12 +135,13 @@ class GetFileInfoArgs(BaseModel):
     )
 
 
-def build_cloud_storage_tools(
+def build_cloud_storage_tools(  # noqa: PLR0913, C901 - keyword-only args; complexity is in nested helpers
     *,
     storage: CloudStorageClient,
     container: str,
     safe_root: Path,
     max_upload_bytes: int = DEFAULT_MAX_UPLOAD_BYTES,
+    session_max_upload_bytes: int | None = DEFAULT_SESSION_MAX_UPLOAD_BYTES,
     require_delete_confirmation: bool = True,
 ) -> list[Tool]:
     """Return the full set of cloud-storage tools bound to one container.
@@ -146,13 +152,22 @@ def build_cloud_storage_tools(
         container: Bucket / container name. Pinned — the LLM cannot override.
         safe_root: Absolute directory the LLM is allowed to read from / write
             to on the local filesystem. Anything outside is rejected.
-        max_upload_bytes: Maximum local file size (in bytes) we will upload.
-            Files above this cap are refused locally, before any network I/O.
+        max_upload_bytes: Maximum local file size (in bytes) we will upload in
+            a single call. Files above this cap are refused locally before any
+            network I/O.
+        session_max_upload_bytes: Maximum aggregate bytes that may be uploaded
+            during the lifetime of this tool set (i.e. this session). Once the
+            cap is hit, further uploads are refused with ``AIToolArgsInvalidError``
+            until the caller rebuilds the tool set. ``None`` disables the cap
+            (default). This is a cost guardrail, not a security boundary.
         require_delete_confirmation: If ``True``, ``delete_file`` requires the
             model to pass ``confirm=true``. Tests can disable this.
 
     """
     safe_root = safe_root.resolve()
+    # Mutable session state — closed over by _upload (FM8).  Wrapped in a
+    # list so we can mutate it without `nonlocal`.
+    _session_bytes_uploaded: list[int] = [0]
 
     def _upload(**raw: object) -> dict[str, object]:
         tool = "upload_file"
@@ -168,11 +183,22 @@ def build_cloud_storage_tools(
                 f"{max_upload_bytes}. Ask the human to raise the cap."
             )
             raise AIToolArgsInvalidError(tool, msg)
+        # FM8: enforce session-wide upload quota before any network I/O.
+        if session_max_upload_bytes is not None:
+            projected = _session_bytes_uploaded[0] + size
+            if projected > session_max_upload_bytes:
+                msg = (
+                    f"session upload quota would be exceeded: {projected} bytes "
+                    f"projected, cap is {session_max_upload_bytes}. Start a new "
+                    "session or ask the human to raise the session cap."
+                )
+                raise AIToolArgsInvalidError(tool, msg)
         info = storage.upload_file(
             container=container,
             local_path=str(local),
             remote_path=args.remote_path,
         )
+        _session_bytes_uploaded[0] += size
         return {
             "object_name": getattr(info, "object_name", args.remote_path),
             "size_bytes": getattr(info, "size_bytes", size),

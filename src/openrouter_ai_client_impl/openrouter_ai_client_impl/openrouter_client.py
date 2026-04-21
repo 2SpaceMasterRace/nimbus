@@ -29,6 +29,7 @@ Design notes:
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import TYPE_CHECKING, Any, cast
 
@@ -95,6 +96,17 @@ _MIN_MAX_STEPS = 1
 
 # HTTP status codes >= this are treated as retryable via the fallback model.
 _HTTP_SERVER_ERROR_MIN = 500
+
+# Regex matching ASCII control characters that must be stripped from tool
+# results before feeding them back to the model (FM7: prompt injection via
+# tool results).  We keep \t (\x09), \n (\x0a), and \r (\x0d) because they
+# are legitimate whitespace.  Everything else in the C0 block, plus DEL
+# (\x7f), is stripped.
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+# pydantic-ai sometimes wraps 429 as ModelHTTPError rather than the openai
+# RateLimitError, so we check the status code explicitly in that branch.
+_HTTP_RATE_LIMIT_STATUS = 429
 
 
 class OpenRouterClient(AIClient):
@@ -271,10 +283,17 @@ class OpenRouterClient(AIClient):
             default_headers["HTTP-Referer"] = self._config.app_referer
         if self._config.app_title:
             default_headers["X-Title"] = self._config.app_title
-        provider = OpenAIProvider(
+        # Thread attribution headers into the underlying openai client so
+        # OpenRouter's dashboard correctly attributes requests to this app.
+        # OpenAIProvider accepts a pre-built openai.AsyncOpenAI instance so
+        # we can pass default_headers without patching internal plumbing.
+        # An empty dict is harmless — the SDK treats it as "no extra headers".
+        openai_client = openai.AsyncOpenAI(
             base_url=self._config.base_url,
             api_key=self._config.api_key,
+            default_headers=default_headers,
         )
+        provider = OpenAIProvider(openai_client=openai_client)
         return OpenAIModel(model_name, provider=provider)
 
     def _make_pai_tool(
@@ -443,6 +462,21 @@ class OpenRouterClient(AIClient):
             )
         except (openai.APIStatusError, ModelHTTPError) as err:
             status = _http_status(err)
+            # pydantic-ai wraps 429 as ModelHTTPError instead of
+            # openai.RateLimitError; handle it explicitly here so callers
+            # get AIRateLimitError and the fallback path is triggered.
+            if status == _HTTP_RATE_LIMIT_STATUS:
+                return self._try_fallback(
+                    err=err,
+                    reason="rate_limit",
+                    user_prompt=user_prompt,
+                    prior_history=prior_history,
+                    pai_tools=pai_tools,
+                    conv_system=conv_system,
+                    from_model=model_name,
+                    fallback_used=fallback_used,
+                    limits=limits,
+                )
             if status >= _HTTP_SERVER_ERROR_MIN:
                 return self._try_fallback(
                     err=err,
@@ -521,7 +555,14 @@ class OpenRouterClient(AIClient):
             raise AIRateLimitError(str(ferr)) from ferr
         except openai.APITimeoutError as ferr:
             raise AITimeoutError(str(ferr)) from ferr
-        except (openai.APIStatusError, ModelHTTPError, UnexpectedModelBehavior) as ferr:
+        except (openai.APIStatusError, ModelHTTPError) as ferr:
+            fstatus = _http_status(ferr)
+            # pydantic-ai can wrap the fallback 429 as ModelHTTPError too.
+            if fstatus == _HTTP_RATE_LIMIT_STATUS:
+                raise AIRateLimitError(str(ferr)) from ferr
+            msg = f"Both primary and fallback models failed. Last: {ferr}"
+            raise AIProviderError(msg) from ferr
+        except UnexpectedModelBehavior as ferr:
             msg = f"Both primary and fallback models failed. Last: {ferr}"
             raise AIProviderError(msg) from ferr
         else:
@@ -701,7 +742,19 @@ def _format_result(result: object) -> str:
 
 
 def _sandbox_result(text: str) -> str:
-    """Wrap and truncate a tool result before feeding it back to the model."""
+    r"""Wrap, sanitize, and truncate a tool result before feeding it to the model.
+
+    Steps applied in order:
+
+    1. Strip ASCII control characters (C0 block minus tab/LF/CR, plus DEL).
+       These can be used for prompt injection — e.g. a file that starts with
+       ``\x1b[H\x1b[2J`` to clear the terminal, or a crafted tool result that
+       exploits a model's special-token handling.
+    2. Truncate to ``_TOOL_RESULT_MAX_CHARS`` with a ``...[truncated]`` suffix.
+    3. Wrap in ``<tool_result source="untrusted">`` so the system prompt can
+       instruct the model to treat this block as untrusted data.
+    """
+    text = _CONTROL_CHARS_RE.sub("", text)
     if len(text) > _TOOL_RESULT_MAX_CHARS:
         text = text[:_TOOL_RESULT_MAX_CHARS] + "\n...[truncated]"
     return f'<tool_result source="untrusted">\n{text}\n</tool_result>'

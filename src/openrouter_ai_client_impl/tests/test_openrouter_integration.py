@@ -1,13 +1,14 @@
-"""Gated live integration test for the OpenRouter client.
+"""End-to-end live tests for the OpenRouter client.
 
-This test issues a real HTTP request to OpenRouter and is skipped by default.
-Opt in by exporting ``OPENROUTER_API_KEY`` and running with the
-``local_credentials`` marker::
+These tests issue real HTTP requests to OpenRouter and require a valid
+``OPENROUTER_API_KEY``.  They run in the ``e2e`` job in CI (which injects
+the key from the ``openrouter`` context) and can be run locally with::
 
-    uv run pytest -m local_credentials src/openrouter_ai_client_impl/tests
+    uv run pytest -m e2e src/openrouter_ai_client_impl/tests/
 
-We keep the test tiny (one round trip, no tools, a short max_tokens) so the
-free-tier budget is sufficient and CI stays cheap when someone does enable it.
+Assertions are **shape-only** — we do not assert specific model output text
+because free-tier models are non-deterministic.  We only verify that the
+returned objects have the expected structure and plausible values.
 """
 
 from __future__ import annotations
@@ -19,33 +20,34 @@ import pytest
 from ai_client_api import Conversation
 from openrouter_ai_client_impl import OpenRouterClient, OpenRouterConfig
 
-pytestmark = [pytest.mark.integration, pytest.mark.local_credentials]
+pytestmark = [pytest.mark.e2e]
 
-
-@pytest.mark.skipif(
+_SKIP_NO_KEY = pytest.mark.skipif(
     not os.environ.get("OPENROUTER_API_KEY"),
-    reason="OPENROUTER_API_KEY not set; skipping live integration test",
+    reason="OPENROUTER_API_KEY not set; skipping live e2e test",
 )
+
+
+@_SKIP_NO_KEY
 def test_live_ping_round_trip() -> None:
-    """A ``ping`` against the real API should return ``True`` for a valid key."""
+    """``ping`` returns ``True`` for a valid key."""
     config = OpenRouterConfig.from_env()
     client = OpenRouterClient(config)
     assert client.ping() is True
 
 
-@pytest.mark.skipif(
-    not os.environ.get("OPENROUTER_API_KEY"),
-    reason="OPENROUTER_API_KEY not set; skipping live integration test",
-)
+@_SKIP_NO_KEY
 def test_live_short_completion() -> None:
-    """A minimal completion against a free model should return non-empty text."""
+    """A minimal completion returns a non-empty response with expected shape."""
     config = OpenRouterConfig.from_env()
     client = OpenRouterClient(config)
     conv = Conversation(system="Respond with a single word.")
     conv.add_user("Say the word: ready")
     response = client.send_message(conv, tools=[], max_steps=1)
-    # The model is free and non-deterministic; we only assert the shape of the
-    # response, not its exact contents.
+    # Shape-only assertions — free models are non-deterministic.
+    assert isinstance(response.text, str)
     assert response.text.strip() != ""
-    assert response.steps == 1
+    assert response.steps >= 1
+    assert isinstance(response.model, str)
     assert response.model in {config.model, config.fallback_model}
+    assert response.tokens.total >= 0

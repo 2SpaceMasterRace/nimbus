@@ -469,3 +469,181 @@ class TestUpstreamErrors:
                 headers={"X-API-Key": TEST_API_KEY},
             ).json()
             assert "detail" in body, f"missing detail for {type(exc).__name__}"
+
+
+# ---------------------------------------------------------------------------
+# Per-user rate limiting (FM10)
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimiting:
+    """Token-bucket rate limiting keyed by user_id."""
+
+    def test_first_request_always_allowed(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        resp = client.post(
+            "/ai/chat",
+            json={"message": "hi", "session_id": "rl-1", "user_id": "user-rl-fresh"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_requests_without_user_id_always_allowed(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        """Callers that omit user_id bypass the per-user bucket."""
+        for _ in range(5):
+            resp = client.post(
+                "/ai/chat",
+                json={"message": "hi", "session_id": "rl-anon"},
+                headers=auth_headers,
+            )
+            assert resp.status_code == 200
+
+    def test_exhausted_bucket_returns_429(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        auth_headers: dict[str, str],
+        fake_client: FakeAIClient,
+    ) -> None:
+        """Once the token bucket is empty, the server returns 429."""
+        import time
+
+        import ai_server.router as router_mod
+        from ai_server.router import _TokenBucket  # type: ignore[attr-defined]
+
+        monkeypatch.setenv("AI_SERVER_API_KEY", TEST_API_KEY)
+        monkeypatch.setenv("AI_SESSION_DIR", str(tmp_path / "rl-sessions"))
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+
+        uid = "user-bucket-empty-test-unique"
+        # Inject a bucket with zero tokens so the next request is refused.
+        router_mod._rate_buckets[uid] = _TokenBucket(  # noqa: SLF001
+            tokens=0.0, last_refill=time.monotonic()
+        )
+
+        test_app = FastAPI()
+        test_app.include_router(router, prefix="/ai")
+        test_app.dependency_overrides[get_ai_client] = lambda: fake_client
+        tc = TestClient(test_app)
+
+        resp = tc.post(
+            "/ai/chat",
+            json={"message": "hi", "session_id": "rl-empty", "user_id": uid},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 429
+        assert "rate limit" in resp.json()["detail"].lower()
+
+
+# ---------------------------------------------------------------------------
+# Session history endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestSessionHistory:
+    def test_history_returns_404_for_missing_session(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        resp = client.get(
+            "/ai/sessions/nonexistent-session/history", headers=auth_headers
+        )
+        assert resp.status_code == 404
+
+    def test_history_requires_auth(self, client: TestClient) -> None:
+        resp = client.get("/ai/sessions/some-session/history")
+        assert resp.status_code in (401, 403)
+
+    def test_history_returns_messages_after_chat(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        fake_client: FakeAIClient,
+        auth_headers: dict[str, str],
+    ) -> None:
+        monkeypatch.setenv("AI_SERVER_API_KEY", TEST_API_KEY)
+        monkeypatch.setenv("AI_SESSION_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+        app = FastAPI()
+        app.include_router(router, prefix="/ai")
+        app.dependency_overrides[get_ai_client] = lambda: fake_client
+        tc = TestClient(app)
+
+        tc.post(
+            "/ai/chat",
+            json={"message": "history test", "session_id": "hist-chan"},
+            headers=auth_headers,
+        )
+        resp = tc.get("/ai/sessions/hist-chan/history", headers=auth_headers)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["session_id"] == "hist-chan"
+        assert body["message_count"] >= 1
+        contents = [m["content"] for m in body["messages"]]
+        assert "history test" in contents
+
+    def test_history_rejects_unsafe_session_id(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        # FastAPI path routing treats slashes as path separators, so a
+        # traversal attempt simply won't match the route — the status code
+        # varies by version but is never 200.
+        resp = client.get("/ai/sessions/../../etc/passwd/history", headers=auth_headers)
+        assert resp.status_code != 200
+
+
+# ---------------------------------------------------------------------------
+# Session delete endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestSessionDelete:
+    def test_delete_nonexistent_returns_deleted_false(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        resp = client.delete("/ai/sessions/never-existed", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is False
+        assert resp.json()["session_id"] == "never-existed"
+
+    def test_delete_existing_session_returns_deleted_true(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        fake_client: FakeAIClient,
+        auth_headers: dict[str, str],
+    ) -> None:
+        monkeypatch.setenv("AI_SERVER_API_KEY", TEST_API_KEY)
+        monkeypatch.setenv("AI_SESSION_DIR", str(tmp_path / "sessions"))
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+        app = FastAPI()
+        app.include_router(router, prefix="/ai")
+        app.dependency_overrides[get_ai_client] = lambda: fake_client
+        tc = TestClient(app)
+
+        tc.post(
+            "/ai/chat",
+            json={"message": "to be deleted", "session_id": "del-chan"},
+            headers=auth_headers,
+        )
+
+        resp = tc.delete("/ai/sessions/del-chan", headers=auth_headers)
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is True
+        assert not (tmp_path / "sessions" / "del-chan.json").exists()
+
+    def test_delete_is_idempotent(
+        self, client: TestClient, auth_headers: dict[str, str]
+    ) -> None:
+        resp1 = client.delete("/ai/sessions/idempotent-del", headers=auth_headers)
+        resp2 = client.delete("/ai/sessions/idempotent-del", headers=auth_headers)
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+        assert resp2.json()["deleted"] is False
+
+    def test_delete_requires_auth(self, client: TestClient) -> None:
+        resp = client.delete("/ai/sessions/any-session")
+        assert resp.status_code in (401, 403)

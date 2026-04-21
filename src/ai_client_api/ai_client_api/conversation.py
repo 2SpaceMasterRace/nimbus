@@ -93,6 +93,25 @@ class Conversation:
         """Return all messages including the pinned system prompt."""
         return (Message(role=Role.SYSTEM, content=self.system), *self._messages)
 
+    def pop_last_user(self) -> bool:
+        """Remove the most-recently appended user message.
+
+        Used by callers that append a user turn optimistically and need to
+        roll back when the downstream call fails — otherwise the failed
+        message lingers and gets re-sent on the next successful request.
+
+        Returns:
+            ``True`` if a user message was found and removed; ``False`` if
+            the message buffer was empty or the last message was not a user
+            message.
+
+        """
+        for i in range(len(self._messages) - 1, -1, -1):
+            if self._messages[i].role is Role.USER:
+                self._messages.pop(i)
+                return True
+        return False
+
     def clear(self) -> None:
         """Drop all non-system messages."""
         self._messages.clear()

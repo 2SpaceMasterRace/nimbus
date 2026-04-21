@@ -225,6 +225,45 @@ def test_send_user_turn_appends_to_conversation_and_saves(tmp_path: Path) -> Non
     assert "hi back" in h.output()
 
 
+def test_send_user_turn_rolls_back_on_error(tmp_path: Path) -> None:
+    """P2: when send_message raises, the optimistic user message is removed."""
+    from ai_client_api import AIProviderError
+
+    client = _fake_client()
+    client.send_message.side_effect = AIProviderError("boom")
+
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=120, force_terminal=False, color_system=None)
+    cli = NimbusCLI(
+        client=client,
+        tools=[],
+        session_id="err-session",
+        session_dir=tmp_path,
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
+        console=console,
+    )
+
+    cli._send_user_turn("will fail")  # noqa: SLF001
+
+    # The failed message must not be in the conversation history.
+    msg_contents = [m.content for m in cli._conversation.messages()]  # noqa: SLF001
+    assert "will fail" not in msg_contents
+
+
+def test_save_conversation_is_atomic(tmp_path: Path) -> None:
+    """FM5: a .tmp file is used; no half-written session files remain after save."""
+    h = _harness(tmp_path)
+    h.cli._conversation.add_user("hello")  # noqa: SLF001
+    h.cli._save_conversation()  # noqa: SLF001
+
+    session_path = tmp_path / "test-session.json"
+    tmp_path2 = tmp_path / "test-session.tmp"
+
+    assert session_path.exists()
+    # The temporary staging file must not linger.
+    assert not tmp_path2.exists()
+
+
 # --- event rendering -------------------------------------------------------
 
 
