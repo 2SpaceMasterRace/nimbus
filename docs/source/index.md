@@ -18,6 +18,7 @@ New here? Start with the getting started guide to install the package and run yo
 Talk to the cloud storage backend with an LLM on the OpenRouter free tier.
 
 - {doc}`ai-client-overview`
+- {doc}`nimbus-ai-service`
 - {doc}`ai-client-tutorial`
 - {doc}`ai-client-guardrails`
 - {doc}`ai-client-api`
@@ -54,6 +55,7 @@ getting-started
 :caption: AI Client (Nimbus)
 
 ai-client-overview
+nimbus-ai-service
 ai-client-tutorial
 ai-client-guardrails
 ai-client-api

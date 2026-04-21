@@ -121,8 +121,15 @@ def _e2e_api_key() -> str | None:
     return os.environ.get("AI_SERVER_API_KEY", "").strip() or None
 
 
+def _run_ai_server_e2e() -> bool:
+    raw = os.environ.get("RUN_AI_SERVER_E2E", "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 @pytest.fixture(scope="session")
 def e2e_base_url() -> str:
+    if not _run_ai_server_e2e():
+        pytest.skip("RUN_AI_SERVER_E2E is not enabled — skipping ai_server e2e tests")
     url = _e2e_base_url()
     if not url:
         pytest.skip("AI_SERVER_BASE_URL not set — skipping e2e tests")
@@ -131,6 +138,8 @@ def e2e_base_url() -> str:
 
 @pytest.fixture(scope="session")
 def e2e_api_key() -> str:
+    if not _run_ai_server_e2e():
+        pytest.skip("RUN_AI_SERVER_E2E is not enabled — skipping ai_server e2e tests")
     key = _e2e_api_key()
     if not key:
         pytest.skip("AI_SERVER_API_KEY not set — skipping e2e tests")

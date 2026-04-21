@@ -1,12 +1,14 @@
 r"""End-to-end tests against the live deployed AI server.
 
-These tests are **skipped** unless both env vars are set:
+These tests are **skipped** unless all of these are set:
 
+    export RUN_AI_SERVER_E2E=1
     export AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev
     export AI_SERVER_API_KEY=<the secret from fly secrets>
 
 Run them with:
 
+    RUN_AI_SERVER_E2E=1 \\
     AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev \\
     AI_SERVER_API_KEY=<key> \\
     uv run pytest src/ai_server/tests/test_e2e.py -v -m e2e

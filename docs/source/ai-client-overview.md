@@ -13,6 +13,7 @@ cloud-storage packages:
 | `openrouter_ai_client_impl`   | Concrete backend using the OpenRouter / OpenAI SDK.     |
 | `openrouter_ai_client_impl.cloud_storage_tools` | Pydantic-validated tools bound to `CloudStorageClient`. |
 | `openrouter_ai_client_impl.cli` (`nimbus`)      | Terminal REPL that wires everything together.           |
+| `ai_server`                   | HTTP service that chat wrappers call to use Nimbus.     |
 
 ## Why this shape
 
@@ -61,6 +62,7 @@ See {doc}`ai-client-guardrails` for the full threat model.
 
 ## Where to go next
 
+- {doc}`nimbus-ai-service` — the HTTP contract that a Slack or Discord wrapper should call.
 - {doc}`ai-client-tutorial` — end-to-end walkthrough with a real file.
 - {doc}`ai-client-guardrails` — security and cost guardrails in detail.
 - {doc}`ai-client-api` — reference for every public class and function.

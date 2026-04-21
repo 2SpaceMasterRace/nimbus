@@ -30,7 +30,7 @@ whether the storage logic runs in-process or behind a network boundary.
 
 ## Architecture Diagram
 
-```mermaid
+```text
 flowchart LR
     User[Consumer Code]
     API[cloud_storage_api\nCloudStorageClient + exceptions]
@@ -53,7 +53,7 @@ flowchart LR
 
 ### Local library path
 
-```mermaid
+```text
 sequenceDiagram
     participant U as User code
     participant F as get_client_impl()
@@ -70,7 +70,7 @@ sequenceDiagram
 
 ### Remote service path
 
-```mermaid
+```text
 sequenceDiagram
     participant U as User code
     participant F as get_client_impl()

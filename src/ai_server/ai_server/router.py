@@ -2,10 +2,11 @@
 
 Routes
 ------
-``GET  /health``                        — liveness probe, no auth required.
-``POST /chat``                          — send a message to the AI agent.
-``GET  /sessions/{session_id}/history`` — retrieve conversation history.
-``DELETE /sessions/{session_id}``       — delete (reset) a session.
+ ``GET  /health``                        — liveness probe, no auth required.
+ ``POST /chat``                          — send a message to the AI agent.
+ ``POST /chat/turn``                     — wrapper-facing canonical chat turn.
+ ``GET  /sessions/{session_id}/history`` — retrieve conversation history.
+ ``DELETE /sessions/{session_id}``       — delete (reset) a session.
 
 Authentication
 --------------
@@ -42,9 +43,10 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -58,10 +60,11 @@ from ai_client_api import (
     AIClientError,
     AIProviderError,
     AIRateLimitError,
+    AIResponse,
     AIStepBudgetExceededError,
     AITimeoutError,
 )
-from ai_server.auth import require_api_key
+from ai_server.auth import require_api_key, require_signed_service_request
 from ai_server.sessions import delete_session, load_session, save_session
 
 log: Any = structlog.get_logger()
@@ -82,6 +85,8 @@ _RATE_LIMIT_CAPACITY: int = int(os.environ.get("AI_RATE_LIMIT_CAPACITY", "10"))
 _RATE_LIMIT_RPM: float = float(os.environ.get("AI_RATE_LIMIT_RPM", "10"))
 # Convert RPM → tokens-per-second for the refill arithmetic.
 _RATE_LIMIT_REFILL_RATE: float = _RATE_LIMIT_RPM / 60.0
+_IDEMPOTENCY_TTL_SECONDS = int(os.environ.get("AI_IDEMPOTENCY_TTL_SECONDS", "3600"))
+_SAFE_CHAT_ID_PATTERN = r"^[A-Za-z0-9_.:-]{1,64}$"
 
 
 @dataclass
@@ -92,10 +97,19 @@ class _TokenBucket:
     last_refill: float = field(default_factory=time.monotonic)
 
 
+@dataclass
+class _CachedTurnResponse:
+    """Cached wrapper-facing response for best-effort idempotent replay."""
+
+    response: ChatTurnResponse
+    expires_at: float
+
+
 # Module-level registry.  CPython dict operations are GIL-atomic; safe in a
 # single-event-loop async server.  Entries accumulate (one per unique user_id)
 # but are small objects — bounded by the number of active Slack/API users.
 _rate_buckets: dict[str, _TokenBucket] = {}
+_idempotent_turns: dict[str, _CachedTurnResponse] = {}
 
 
 def _check_rate_limit(user_id: str | None) -> bool:
@@ -190,6 +204,92 @@ class ChatResponse(BaseModel):
     )
 
 
+class ChatTurnRequest(BaseModel):
+    """Canonical wrapper-facing request body for one chat turn."""
+
+    platform: str = Field(
+        description="Chat platform name, e.g. 'slack'.",
+        min_length=1,
+        max_length=16,
+        pattern=r"^[a-z][a-z0-9_-]{0,15}$",
+    )
+    workspace_id: str = Field(
+        description="Workspace/team identifier from the chat platform.",
+        min_length=1,
+        max_length=64,
+        pattern=_SAFE_CHAT_ID_PATTERN,
+    )
+    channel_id: str = Field(
+        description="Channel or DM identifier from the chat platform.",
+        min_length=1,
+        max_length=64,
+        pattern=_SAFE_CHAT_ID_PATTERN,
+    )
+    thread_id: str | None = Field(
+        default=None,
+        description=(
+            "Conversation/thread anchor from the chat platform. If omitted, "
+            "the message_id becomes the conversation anchor."
+        ),
+        max_length=64,
+        pattern=_SAFE_CHAT_ID_PATTERN,
+    )
+    message_id: str = Field(
+        description="Unique source message identifier from the chat platform.",
+        min_length=1,
+        max_length=64,
+        pattern=_SAFE_CHAT_ID_PATTERN,
+    )
+    user_id: str = Field(
+        description="Platform user identifier for the actor who sent the turn.",
+        min_length=1,
+        max_length=64,
+        pattern=_SAFE_CHAT_ID_PATTERN,
+    )
+    text: str = Field(
+        description="Plain-text message body to send to Nimbus.",
+        min_length=1,
+        max_length=4096,
+    )
+    idempotency_key: str = Field(
+        description="Caller-generated idempotency key for safe retries.",
+        min_length=1,
+        max_length=256,
+        pattern=r"^[A-Za-z0-9_.:-]{1,256}$",
+    )
+    request_id: str | None = Field(
+        default=None,
+        description="Optional caller-generated correlation/request ID.",
+        max_length=128,
+        pattern=r"^[A-Za-z0-9_.:-]{1,128}$",
+    )
+
+
+class ChatTurnResponse(BaseModel):
+    """Canonical wrapper-facing response body for one chat turn."""
+
+    request_id: str = Field(description="Correlation/request ID for this turn.")
+    conversation_id: str = Field(
+        description="Normalized conversation identity used by Nimbus state."
+    )
+    text: str = Field(description="Reply text for the wrapper to post back.")
+    outcome: Literal["reply"] = Field(
+        description="Machine-readable outcome class for the turn."
+    )
+    confirmation_required: bool = Field(
+        description="Whether the wrapper should treat this as a confirmation prompt."
+    )
+    suggested_next_actions: list[str] = Field(
+        default_factory=list,
+        description="Optional safe follow-up suggestions for the user.",
+    )
+    model: str = Field(description="Model that produced this reply.")
+    steps: int = Field(description="Number of model-call rounds taken.")
+    fallback_used: bool = Field(
+        description="True if the primary model failed and the fallback was used."
+    )
+
+
 class MessageRecord(BaseModel):
     """Single turn in a conversation history response."""
 
@@ -247,6 +347,128 @@ def _session_dir() -> Path:
     return Path(raw) if raw else _DEFAULT_SESSION_DIR
 
 
+def _compose_conversation_id(req: ChatTurnRequest) -> str:
+    """Return the normalized Nimbus conversation ID for a wrapper turn."""
+    anchor = req.thread_id or req.message_id
+    return f"{req.platform}:{req.workspace_id}:{req.channel_id}:{anchor}"
+
+
+def _new_request_id(explicit_request_id: str | None) -> str:
+    """Return the caller-supplied request ID or generate a new one."""
+    if explicit_request_id:
+        return explicit_request_id
+    return f"req-{uuid.uuid4().hex}"
+
+
+def _idempotency_cache_key(req: ChatTurnRequest) -> str:
+    """Return the cache key for best-effort idempotent replay."""
+    return f"{req.platform}:{req.workspace_id}:{req.idempotency_key}"
+
+
+def _get_cached_turn_response(cache_key: str) -> ChatTurnResponse | None:
+    """Return an unexpired cached turn response, if present."""
+    now = time.monotonic()
+    expired = [
+        key for key, entry in _idempotent_turns.items() if entry.expires_at <= now
+    ]
+    for key in expired:
+        del _idempotent_turns[key]
+    entry = _idempotent_turns.get(cache_key)
+    if entry is None:
+        return None
+    return entry.response
+
+
+def _store_cached_turn_response(cache_key: str, response: ChatTurnResponse) -> None:
+    """Cache a wrapper-facing response for best-effort idempotent replay."""
+    _idempotent_turns[cache_key] = _CachedTurnResponse(
+        response=response,
+        expires_at=time.monotonic() + float(_IDEMPOTENCY_TTL_SECONDS),
+    )
+
+
+async def _run_chat_interaction(
+    *,
+    message: str,
+    session_id: str,
+    user_id: str | None,
+    client: OpenRouterClient,
+) -> AIResponse:
+    """Run one AI chat interaction against the persisted conversation state."""
+    session_dir = _session_dir()
+    log.info("chat_request", session_id=session_id, user_id=user_id)
+
+    if not _check_rate_limit(user_id):
+        log.warning("rate_limit_exceeded", user_id=user_id)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Per-user rate limit exceeded. Try again shortly.",
+        )
+
+    async with _get_session_lock(session_id):
+        try:
+            conv = load_session(session_dir, session_id, DEFAULT_SYSTEM_PROMPT)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=str(exc),
+            ) from exc
+
+        conv.add_user(message)
+
+        try:
+            ai_response = await asyncio.to_thread(
+                client.send_message,
+                conv,
+                tools=None,
+            )
+        except AIClientConfigError as exc:
+            log.exception("ai_config_error", detail=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="AI service is misconfigured — check server logs.",
+            ) from exc
+        except AIRateLimitError as exc:
+            log.warning("ai_rate_limit", detail=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="AI provider is rate-limited.  Try again shortly.",
+            ) from exc
+        except AITimeoutError as exc:
+            log.warning("ai_timeout", detail=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="AI provider timed out.",
+            ) from exc
+        except AIStepBudgetExceededError as exc:
+            log.warning("ai_step_budget_exceeded", detail=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="AI required too many steps.  Simplify the request.",
+            ) from exc
+        except (AIProviderError, AIClientError) as exc:
+            log.exception("ai_provider_error", detail=str(exc))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Upstream AI provider error.",
+            ) from exc
+
+        try:
+            save_session(session_dir, session_id, conv)
+        except Exception:
+            log.exception("session_save_failed", session_id=session_id)
+
+    log.info(
+        "chat_response",
+        session_id=session_id,
+        model=ai_response.model,
+        steps=ai_response.steps,
+        tokens=ai_response.tokens.total,
+        fallback_used=ai_response.fallback_used,
+    )
+    return ai_response
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -286,87 +508,11 @@ async def chat(
         HTTPException 504: Upstream AI provider timeout.
 
     """
-    session_dir = _session_dir()
-    log.info("chat_request", session_id=req.session_id, user_id=req.user_id)
-
-    if not _check_rate_limit(req.user_id):
-        log.warning("rate_limit_exceeded", user_id=req.user_id)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Per-user rate limit exceeded. Try again shortly.",
-        )
-
-    async with _get_session_lock(req.session_id):
-        try:
-            conv = load_session(session_dir, req.session_id, DEFAULT_SYSTEM_PROMPT)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=str(exc),
-            ) from exc
-
-        conv.add_user(req.message)
-
-        # ``send_message`` calls ``agent.run_sync`` internally — blocking.
-        # ``asyncio.to_thread`` moves it off the event loop so the lock is
-        # released to other coroutines while the LLM is thinking.
-        #
-        # To enable file tools once a real CloudStorageClient is wired in,
-        # import build_slack_tools from ai_server.slack_tools and pass
-        # tools=build_slack_tools(storage=...) instead of tools=None.
-        try:
-            ai_response = await asyncio.to_thread(
-                client.send_message,
-                conv,
-                tools=None,
-            )
-        except AIClientConfigError as exc:
-            # Can be raised by send_message if the client detects a config
-            # problem at call time (e.g. expired or revoked API key).
-            log.exception("ai_config_error", detail=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="AI service is misconfigured — check server logs.",
-            ) from exc
-        except AIRateLimitError as exc:
-            log.warning("ai_rate_limit", detail=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="AI provider is rate-limited.  Try again shortly.",
-            ) from exc
-        except AITimeoutError as exc:
-            log.warning("ai_timeout", detail=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                detail="AI provider timed out.",
-            ) from exc
-        except AIStepBudgetExceededError as exc:
-            log.warning("ai_step_budget_exceeded", detail=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="AI required too many steps.  Simplify the request.",
-            ) from exc
-        except (AIProviderError, AIClientError) as exc:
-            log.exception("ai_provider_error", detail=str(exc))
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Upstream AI provider error.",
-            ) from exc
-
-        # Persist the updated conversation.  A save failure is logged but
-        # does not fail the request — the reply is already computed.
-        try:
-            save_session(session_dir, req.session_id, conv)
-        except Exception:
-            log.exception("session_save_failed", session_id=req.session_id)
-
-    log.info(
-        "chat_response",
+    ai_response = await _run_chat_interaction(
+        message=req.message,
         session_id=req.session_id,
-        model=ai_response.model,
-        steps=ai_response.steps,
-        tokens=ai_response.tokens.total,
-        fallback_used=ai_response.fallback_used,
+        user_id=req.user_id,
+        client=client,
     )
 
     return ChatResponse(
@@ -376,6 +522,54 @@ async def chat(
         steps=ai_response.steps,
         fallback_used=ai_response.fallback_used,
     )
+
+
+@router.post("/chat/turn", response_model=ChatTurnResponse)
+async def chat_turn(
+    req: ChatTurnRequest,
+    _auth: Annotated[str, Depends(require_signed_service_request)],
+    client: Annotated[OpenRouterClient, Depends(get_ai_client)],
+) -> ChatTurnResponse:
+    """Accept one canonical wrapper-facing chat turn and return a reply.
+
+    This endpoint exists for chat wrappers such as the future Slack app. It
+    derives the internal Nimbus conversation ID from the wrapper's normalized
+    transport identifiers and uses signed request authentication instead of the
+    legacy shared API key.
+    """
+    request_id = _new_request_id(req.request_id)
+    conversation_id = _compose_conversation_id(req)
+    cache_key = _idempotency_cache_key(req)
+
+    cached = _get_cached_turn_response(cache_key)
+    if cached is not None:
+        log.info(
+            "chat_turn_idempotent_replay",
+            request_id=request_id,
+            conversation_id=conversation_id,
+            idempotency_key=req.idempotency_key,
+        )
+        return cached
+
+    ai_response = await _run_chat_interaction(
+        message=req.text,
+        session_id=conversation_id,
+        user_id=req.user_id,
+        client=client,
+    )
+    response = ChatTurnResponse(
+        request_id=request_id,
+        conversation_id=conversation_id,
+        text=ai_response.text,
+        outcome="reply",
+        confirmation_required=False,
+        suggested_next_actions=[],
+        model=ai_response.model,
+        steps=ai_response.steps,
+        fallback_used=ai_response.fallback_used,
+    )
+    _store_cached_turn_response(cache_key, response)
+    return response
 
 
 @router.get("/sessions/{session_id}/history", response_model=SessionHistoryResponse)
@@ -405,7 +599,7 @@ async def get_session_history(
         conv = load_session(session_dir, session_id, DEFAULT_SYSTEM_PROMPT)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 
@@ -457,7 +651,7 @@ async def delete_session_endpoint(
             removed = delete_session(session_dir, session_id)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
 

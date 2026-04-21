@@ -60,7 +60,7 @@ class _RaisingClient:
 
 def _app_raising(exc: Exception) -> TestClient:
     """Return a TestClient whose AI client always raises ``exc``."""
-    os.environ.setdefault("AI_SERVER_API_KEY", TEST_API_KEY)
+    os.environ["AI_SERVER_API_KEY"] = TEST_API_KEY
     test_app = FastAPI()
     test_app.include_router(router, prefix="/ai")
     test_app.dependency_overrides[get_ai_client] = lambda: _RaisingClient(exc)

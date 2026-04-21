@@ -9,6 +9,8 @@ Repository-wide guidance for coding agents. Explicit user instructions override 
 - Read the relevant code before editing. Do not guess from names alone.
 - Before non-trivial implementation, write down the working system model: goals, public contract, invariants, failure modes, dependencies, and verification plan.
 - Treat failures as the default case, not edge cases. Design timeouts, retries, idempotency, backpressure, and observability intentionally.
+- Be wary of the scale, complexity, and maturity of this codebase when making changes. Build an accurate mental model before editing so local fixes do not damage system-level design.
+- Develop the correct intuitions and use the correct tools within the limits of the current context window. Ask the user targeted questions whenever needed instead of guessing past uncertainty.
 - Prefer the smallest correct change that fits the existing design.
 - Prefer atomic, focused changes that are easy to review and revert.
 - Preserve package boundaries and the dependency-injection pattern.
@@ -74,11 +76,12 @@ Design intent:
 ## Default Workflow
 
 1. Read the relevant files and search for existing patterns before editing.
-2. For non-trivial work, define the contract first: user-visible behavior, invariants, state ownership, failure model, timeout/retry/idempotency/backpressure plan, and how the change will be verified.
-3. Make the target behavior explicit. For non-trivial changes, encode that behavior in tests.
-4. Implement the smallest correct change that satisfies the request.
-5. Run targeted verification first, then broader checks when the change warrants it.
-6. Finish with a clear summary of what changed, how it was verified, and any remaining risk.
+2. Build an accurate working model of the touched subsystem: what owns state, what the transport boundaries are, what invariants exist, and where failure is most likely.
+3. For non-trivial work, define the contract first: user-visible behavior, invariants, state ownership, failure model, timeout/retry/idempotency/backpressure plan, and how the change will be verified.
+4. Make the target behavior explicit. For non-trivial changes, encode that behavior in tests.
+5. Implement the smallest correct change that satisfies the request.
+6. Run targeted verification first, then broader checks when the change warrants it.
+7. Finish with a clear summary of what changed, how it was verified, and any remaining risk.
 
 For networked or stateful work, explicitly decide what happens under timeout, partial failure, duplicate delivery, overload, and dependency outage before writing code.
 
@@ -91,6 +94,8 @@ If a requested public-facing change has no clear local precedent or acceptable s
 If a non-trivial public-facing change is underdefined and there is no clear issue, precedent, or acceptable local pattern to follow, help define the issue, proposal, or plan before implementing.
 
 Use `AGENTS.md`, the root `CONTRIBUTING.md`, the root `pyproject.toml`, and existing scripts as the canonical sources for development commands and tool configuration.
+
+Read `plans.md` when you need the broader direction for developer productivity and codebase foundations. The long-term goal is a codebase with strong lifecycle support across source control, environments, code generation, CI, release flow, and runtime tooling, and Nimbus should integrate tightly with those foundations rather than bypassing them.
 
 Prefer dedicated search, read, and edit tools when available. Otherwise use fast, deterministic commands such as `rg`. Parallelize independent reads, searches, and checks when your tooling allows it.
 

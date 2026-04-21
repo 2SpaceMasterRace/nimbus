@@ -84,8 +84,7 @@ class S3Client(CloudStorageClient):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
-            InvalidObjectNameError: If remote_path is empty or starts with a
-                leading slash.
+            InvalidObjectNameError: If remote_path is empty or starts with a slash.
             LocalFileAccessError: If local_path cannot be read.
             StorageBackendError: If the upload fails due to AWS service errors.
 

@@ -102,7 +102,7 @@ The built Sphinx guide is also available from the running app at `/guide/`.
 
 See {doc}`api` for the full endpoint reference.
 
-For a step-by-step walkthrough with a dummy file and exact curl commands, see {doc}`curl-tutorial`.
+For more endpoint examples, see {doc}`api`.
 
 ## Next Steps
 
