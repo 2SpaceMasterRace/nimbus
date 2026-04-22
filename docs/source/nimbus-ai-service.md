@@ -860,6 +860,78 @@ Recommended methods:
 - `call_nimbus(body)`
 - `post_nimbus_result(channel_id, thread_id, payload)`
 
+### AI Integration For The Nimbus Slack Bridge
+
+This is the core AI integration step for the Slack team.
+
+The Slack bridge should not call OpenRouter directly. It should not hold model
+selection logic, tool-calling logic, confirmation logic, or storage safety
+policy. All of that lives behind Nimbus.
+
+The bridge's AI job is only:
+
+1. build the canonical Nimbus request body
+2. sign it with `AI_SERVER_SIGNING_SECRET`
+3. send it to `POST /ai/chat/turn`
+4. route on `outcome`
+5. post the returned `text` back into Slack
+
+Minimal copy-paste path:
+
+```python
+from __future__ import annotations
+
+from ai_server.wrapper_client import build_message_event_turn
+from ai_server.wrapper_client import build_slash_command_turn
+from ai_server.wrapper_client import encode_turn_body
+from ai_server.wrapper_client import sign_nimbus_request
+import httpx
+
+
+def call_nimbus_ai(*, base_url: str, signing_secret: str, body: dict[str, object]) -> dict[str, object]:
+    path = "/ai/chat/turn"
+    body_bytes = encode_turn_body(body)
+    headers = sign_nimbus_request(body=body_bytes, secret=signing_secret)
+    response = httpx.post(
+        f"{base_url.rstrip('/')}{path}",
+        content=body_bytes,
+        headers=headers,
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise TypeError("Nimbus returned a non-object JSON payload")
+    return payload
+
+
+def build_message_turn(*, team_id: str, event_id: str, event: dict[str, object]) -> dict[str, object]:
+    return build_message_event_turn(
+        workspace_id=team_id,
+        event_id=event_id,
+        event=event,
+    )
+
+
+def build_command_turn(*, form: dict[str, str]) -> dict[str, object]:
+    return build_slash_command_turn(
+        workspace_id=form["team_id"],
+        channel_id=form["channel_id"],
+        trigger_id=form["trigger_id"],
+        user_id=form["user_id"],
+        text=form["text"],
+    )
+```
+
+The Slack bridge should then post back to Slack like this:
+
+- if `outcome == "reply"`: post the text normally
+- if `outcome == "confirmation_required"`: post the text in the same thread and
+  wait for the next Slack event
+- if `outcome == "partial_success"`: post the text as an operational result,
+  not a fatal failure
+- if `outcome == "error"`: post the text as a user-safe failure message
+
 Minimal sketch:
 
 ```python
