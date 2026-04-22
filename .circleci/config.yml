@@ -72,17 +72,23 @@ jobs:
       - run:
           name: Run component unit tests with coverage
           command: |
-            uv run pytest \
+            mkdir -p coverage-data
+            uv run coverage run --data-file=coverage-data/.coverage.unit -m pytest \
+              -o addopts="--import-mode=importlib" \
               src/ \
               --junitxml=test-results/unit/results.xml \
-              --cov-report=xml:coverage/unit-coverage.xml \
-              --cov-report=html:coverage/unit-html \
               -v
+            uv run coverage xml --data-file=coverage-data/.coverage.unit -o coverage/unit-coverage.xml
+            uv run coverage html --data-file=coverage-data/.coverage.unit -d coverage/unit-html
       - store_test_results:
           path: test-results/unit
       - store_artifacts:
           path: coverage/unit-html
           destination: coverage/unit
+      - persist_to_workspace:
+          root: .
+          paths:
+            - coverage-data
   integration-tests:
     executor: python-executor
     steps:
@@ -92,18 +98,23 @@ jobs:
       - run:
           name: Run integration tests (DI wiring verification)
           command: |
-            uv run pytest \
+            mkdir -p coverage-data
+            uv run coverage run --data-file=coverage-data/.coverage.integration -m pytest \
+              -o addopts="--import-mode=importlib" \
               tests/integration/ \
               --junitxml=test-results/integration/results.xml \
-              --cov-report=xml:coverage/integration-coverage.xml \
-              --cov-report=html:coverage/integration-html \
-              --cov-fail-under=0 \
               -v
+            uv run coverage xml --data-file=coverage-data/.coverage.integration -o coverage/integration-coverage.xml
+            uv run coverage html --data-file=coverage-data/.coverage.integration -d coverage/integration-html
       - store_test_results:
           path: test-results/integration
       - store_artifacts:
           path: coverage/integration-html
           destination: coverage/integration
+      - persist_to_workspace:
+          root: .
+          paths:
+            - coverage-data
 
   e2e-tests:
     executor: python-executor
@@ -115,18 +126,70 @@ jobs:
       - run:
           name: Run E2E tests against real AWS infrastructure
           command: |
-            uv run pytest \
+            mkdir -p coverage-data
+            uv run coverage run --data-file=coverage-data/.coverage.e2e -m pytest \
+              -o addopts="--import-mode=importlib" \
               tests/e2e \
               --junitxml=test-results/e2e/results.xml \
-              --cov-report=xml:coverage/e2e-coverage.xml \
-              --cov-report=html:coverage/e2e-html \
-              --cov-fail-under=0 \
               -v
+            uv run coverage xml --data-file=coverage-data/.coverage.e2e -o coverage/e2e-coverage.xml
+            uv run coverage html --data-file=coverage-data/.coverage.e2e -d coverage/e2e-html
       - store_test_results:
           path: test-results/e2e
       - store_artifacts:
           path: coverage/e2e-html
           destination: coverage/e2e
+      - persist_to_workspace:
+          root: .
+          paths:
+            - coverage-data
+
+  ai-e2e-tests:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - install-dependencies
+      - run:
+          name: Run ai_server e2e tests against deployed Nimbus
+          command: |
+            mkdir -p coverage-data
+            RUN_AI_SERVER_E2E=1 uv run coverage run --data-file=coverage-data/.coverage.ai_e2e -m pytest \
+              -o addopts="--import-mode=importlib" \
+              src/ai_server/tests/test_e2e.py \
+              -m e2e \
+              --junitxml=test-results/ai-e2e/results.xml \
+              -v
+            uv run coverage xml --data-file=coverage-data/.coverage.ai_e2e -o coverage/ai-e2e-coverage.xml
+            uv run coverage html --data-file=coverage-data/.coverage.ai_e2e -d coverage/ai-e2e-html
+      - store_test_results:
+          path: test-results/ai-e2e
+      - store_artifacts:
+          path: coverage/ai-e2e-html
+          destination: coverage/ai-e2e
+      - persist_to_workspace:
+          root: .
+          paths:
+            - coverage-data
+
+  coverage-gate:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - install-dependencies
+      - attach_workspace:
+          at: .
+      - run:
+          name: Combine coverage and enforce project threshold
+          command: |
+            uv run coverage combine --data-file=.coverage coverage-data/.coverage.*
+            uv run coverage report
+            uv run coverage xml --data-file=.coverage -o coverage/combined-coverage.xml
+            uv run coverage html --data-file=.coverage -d coverage/combined-html
+      - store_artifacts:
+          path: coverage/combined-html
+          destination: coverage/combined
 
   deploy-fly:
     executor: python-executor
@@ -152,10 +215,18 @@ workflows:
           context: aws-ospsd
           requires:
             - integration-tests
+      - ai-e2e-tests:
+          context: openrouter
+          requires:
+            - integration-tests
+      - coverage-gate:
+          requires:
+            - e2e-tests
+            - ai-e2e-tests
       - deploy-fly:
           context: flyio
           requires:
-            - e2e-tests
+            - coverage-gate
           filters:
             branches:
               only: hw-3

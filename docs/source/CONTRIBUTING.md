@@ -104,6 +104,7 @@ export AWS_ACCESS_KEY_ID="AKIA..."
 export AWS_SECRET_ACCESS_KEY="your_secret"
 export AWS_REGION="us-east-1"
 export AWS_BUCKET_NAME="your-test-bucket"
+export OAUTH_SESSION_STORE_DIR="/tmp/ospsd-oauth-sessions"
 ```
 
 For convenience, create a `.env` file in the repo root (it is in `.gitignore` and will never be committed):

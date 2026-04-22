@@ -9,6 +9,9 @@
   * KILL  decided against
 
 ------------------------------------------------------------
+ migrate to buildkite, launchdarkly, temporal, Also add to observability tasks : run tests, review telemetry, and query feature flags.
+integrate cloudflare and other protection against the publicly deployed servers
+ngrok too
 
 * TODO Now [2/20]
 ** DONE Documentation [2/8]

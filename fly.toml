@@ -6,15 +6,15 @@ primary_region = "iad"
 
 [env]
   PORT = "8080"
-  # Session files are written here; the path is mounted from the persistent
-  # volume below so they survive machine restarts.
+  # Session files plus wrapper replay/idempotency state are written here; the
+  # path is mounted from the persistent volume below so they survive restarts.
   AI_SESSION_DIR = "/data/sessions"
 
 [[mounts]]
   source      = "nimbus_sessions"
   destination = "/data"
-  # One volume per machine; with a single machine this gives session
-  # persistence across restarts without needing an external KV store.
+  # One volume per machine; with a single machine this gives session and
+  # request-state persistence across restarts without an external KV store.
 
 [http_service]
   internal_port = 8080

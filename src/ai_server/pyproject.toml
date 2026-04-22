@@ -5,6 +5,9 @@ description = "FastAPI service that exposes OpenRouterClient over HTTP for Slack
 requires-python = ">=3.12"
 dependencies = [
     "ai-client-api",
+    "aws-client-impl",
+    "cloud-storage-api",
+    "nimbus-runtime",
     "openrouter-ai-client-impl",
     "fastapi>=0.115.0",
     "structlog>=25.5.0",
@@ -19,9 +22,13 @@ packages = ["ai_server"]
 
 [tool.uv.sources]
 ai-client-api = { workspace = true }
+aws-client-impl = { workspace = true }
+cloud-storage-api = { git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git", rev = "v1.0.0" }
+nimbus-runtime = { workspace = true }
 openrouter-ai-client-impl = { workspace = true }
 
 [tool.pytest.ini_options]
 markers = [
+    "unit: fast isolated ai_server tests",
     "e2e: end-to-end tests against the live deployed server — skipped unless AI_SERVER_BASE_URL and AI_SERVER_API_KEY are set",
 ]

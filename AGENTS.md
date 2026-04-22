@@ -24,6 +24,8 @@ Repository-wide guidance for coding agents. Explicit user instructions override 
 - Treat public APIs, abstractions, documentation, and examples as part of the product; optimize for long-term clarity, compatibility, and developer experience, not just the fastest patch.
 - Treat observable behavior as API surface, not just signatures: env vars, CLI output, persisted schema, error messages, ordering, and defaults can all create compatibility obligations.
 - Use modern tooling and concepts deliberately when they reduce risk or cognitive load; do not add fashionable machinery without a concrete need.
+- Build systems that would survive a serious production design review: explicit contracts, operational visibility, bounded failure modes, and a believable scale-up path.
+- Avoid both toy shortcuts and speculative platformization. Start with the smallest production-credible primitive, document why it is enough today, and state the trigger for introducing heavier infrastructure such as Redis, queues, or additional databases.
 - Keep `AGENTS.md` and `CONTRIBUTING.md` current when project structure, commands, or conventions materially change.
 
 ---
@@ -120,6 +122,8 @@ For tool and dependency upgrades, prefer current official documentation and chan
 - Reason about saturation, queue growth, and tail latency, not just happy-path averages.
 - Bound loops, retries, queues, and concurrency; avoid hidden unbounded work.
 - Use async, queues, caching, MCP, and extra abstractions only when they reduce concrete complexity or failure risk.
+- Prefer boring, proven infrastructure over impressive-looking stacks. Redis, Kafka, Postgres, workflow engines, vector stores, and graph databases are tools, not achievements; introduce them only when the access pattern, topology, or failure model clearly demands them.
+- Design so today's simple primitive can graduate cleanly to a shared backend later. Preserve upgrade seams even when the current deployment only needs a local file, in-memory cache, or single-node assumption.
 - Prefer strong primitives and clean extension points over narrow one-off features, but do not add abstractions without a concrete need.
 - Use data-focused helper types judiciously; keep behavior close to the data when that improves the model.
 

@@ -43,14 +43,50 @@ Two independent axes: *Cloud-Storage Vertical* (teams 2, 6, 10) exposes `CloudSt
 ## Current state
 
 - Branch: `hw-3`.
-- Latest commit `718d45b`: docs update from session 2. Session 3 work staged for commit.
+- Latest pushed commit `e246957`: signed wrapper-facing AI contract for chat adapters.
 - Wrapper-facing AI-service contract implemented:
   - `POST /ai/chat/turn`
   - signed-request auth via `X-Nimbus-Timestamp`, `X-Nimbus-Nonce`, `X-Nimbus-Signature`
   - normalized conversation IDs derived from `platform/workspace/channel/thread-or-message`
   - best-effort idempotent replay keyed by `platform + workspace_id + idempotency_key`
   - wrapper docs live at `docs/source/nimbus-ai-service.md`
-- Worktree includes design/docs + AI-service contract changes. `scripts/benchmark_results.json` remains untracked data, not code.
+- `/ai/chat/turn` now binds real read-only storage tools when
+  `NIMBUS_CONTAINER` or `AWS_BUCKET_NAME` is configured:
+  - `list_files(prefix="")`
+  - `get_file_info(remote_path)`
+  - verified by `src/ai_server/tests/test_wrapper_contract.py`
+  - `delete_file` remains intentionally disabled on the wrapper path until the
+    public confirmation contract is explicit
+- `/ai/chat/turn` now accepts a stable wrapper-owned attachment metadata contract:
+  - request model includes optional `attachments[]`
+  - each attachment carries `platform_file_id`, `filename`, `content_type`, and
+    `size_bytes`
+  - the route validates count/size/content-type bounds and exposes attachment
+    metadata to the AI turn as safe context
+  - exact Slack file -> Nimbus mapping lives in `docs/source/nimbus-ai-service.md`
+- Wrapper conversation IDs no longer fail persistence when normalized chat IDs
+  exceed 128 characters:
+  - `sessions.py` now maps long logical session IDs to deterministic hashed
+    filename stems while preserving the full logical `session_id` in JSON
+  - worst-case wrapper ID lengths are covered in
+    `src/ai_server/tests/test_wrapper_contract.py`
+  - direct session round-trip coverage lives in `src/ai_server/tests/test_sessions.py`
+- Wrapper rate limiting now keys on the real Model A principal:
+  - `/ai/chat/turn` uses `platform:workspace_id:user_id`
+  - same `user_id` in two workspaces no longer collides in the token bucket
+  - coverage lives in `src/ai_server/tests/test_wrapper_contract.py`
+- Wrapper replay/idempotency state is no longer process-memory-only on the
+  deployed single-machine shape:
+  - signed-request nonce state and idempotent turn responses now persist under
+    `AI_SESSION_DIR/_request_state`
+  - wrapper retries and replay checks survive service restarts on the mounted
+    Fly.io volume
+  - the current guarantee still assumes one machine / one process, matching
+    `fly.toml`
+  - coverage lives in `src/ai_server/tests/test_request_state.py` and
+    `src/ai_server/tests/test_wrapper_contract.py`
+- Review/TODO handoff file now exists at `NIMBUS_NEXT_TODOS.md`.
+- Worktree currently includes local follow-up docs/todo edits plus `scripts/benchmark_results.json` as untracked data, not code.
 - Default models: **`z-ai/glm-4.5-air:free`** (primary, Novita) + **`nousresearch/hermes-3-llama-3.1-405b:free`** (fallback, DeepInfra). Neither is Venice.
 - `DEFAULT_MAX_STEPS = 8` in `config.py`. Rationale: cloud-storage tasks are ≤ 4 steps in practice; 8 is the right ceiling — enough for complex chaining, prevents runaway at 10× load (see step-budget note below).
 - System prompt has the anti-loop line: *"After list_files returns, summarize immediately. Do NOT call get_file_info on individual entries unless the user explicitly asks about a specific file."*
@@ -234,10 +270,10 @@ For 10 users, worst case = 10 × N concurrent LLM calls. At Venice's **8 RPM sha
 ## Resume here next session
 
 1. Read `AGENTS.md` and this file first.
-2. **Highest priority: raise test coverage above 80%.** Total is at 61%. `openrouter_client.py` is at 82% but the overall total drags because of uncovered branches in `cli.py` REPL loop (the `run()` `Prompt.ask()` loop is not tested), `cloud_storage_tools.py` error paths, and `ai_server`. The coverage threshold in `pyproject.toml` is 80% and is enforced — CI will fail.
-3. The next concrete deliverables are: **CI AI e2e job**, **Auth/Slack design doc**, **telemetry wiring**, and **Fly.io volume/deploy verification**.
-4. Do not touch `router.py` or `sessions.py` without re-reading them first — they are in a good state and easy to accidentally regress.
-5. The step-budget math above should be added as a comment block in `config.py` if it is not already there.
+2. Read `NIMBUS_HW3_SYSTEM_DESIGN.md` for the system design and `NIMBUS_NEXT_TODOS.md` for the reviewed backlog.
+3. The top Priority 0 directive now lives in `NIMBUS_NEXT_TODOS.md:0.0`: finish the wrapper contract completely and the full Slack/Nimbus functionality, and after each completed slice update docs, run local CI, and commit.
+4. Full local checks currently pass; do not regress them.
+5. Do not touch `router.py`, `auth.py`, or `sessions.py` without re-reading them first — they now carry the wrapper-facing contract and are easy to accidentally regress.
 6. Before adding any new package dep, check `pyproject.toml` to confirm it is not already present.
 7. The CLI entry point is `cli:app` (Typer), not `cli:main`. If you see `ImportError: cannot import name 'main'` in tests, check that `test_cli.py` imports `app` not `main`.
 

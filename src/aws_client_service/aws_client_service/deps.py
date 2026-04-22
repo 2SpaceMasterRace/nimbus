@@ -7,6 +7,8 @@ from typing import Annotated
 
 from fastapi import Header, HTTPException, Request, status
 
+from aws_client_service.token_store import get_oauth_session
+
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
     """Return the bearer token portion of an Authorization header."""
@@ -44,9 +46,11 @@ def require_oauth_session(
     if expected_api_key and provided_api_key == expected_api_key:
         return expected_api_key
 
-    token = request.session.get("github_access_token")
-    if token:
-        return str(token)
+    session_id = request.session.get("github_session_id")
+    if isinstance(session_id, str) and session_id:
+        session = get_oauth_session(session_id)
+        if session is not None:
+            return session.access_token
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

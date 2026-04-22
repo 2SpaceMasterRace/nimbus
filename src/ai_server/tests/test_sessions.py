@@ -6,7 +6,13 @@ import json
 from pathlib import Path
 
 import pytest
-from ai_server.sessions import _validate_session_id, load_session, save_session
+from ai_server.sessions import (
+    _validate_session_id,
+    list_sessions,
+    load_session,
+    save_session,
+    session_exists,
+)
 
 from ai_client_api import Conversation
 
@@ -41,6 +47,9 @@ class TestValidateSessionId:
     def test_accepts_exactly_128_chars(self) -> None:
         _validate_session_id("a" * 128)
 
+    def test_accepts_safe_session_id_longer_than_128_chars(self) -> None:
+        _validate_session_id("a" * 256)
+
     # --- invalid inputs ---
 
     def test_rejects_path_traversal(self) -> None:
@@ -66,10 +75,6 @@ class TestValidateSessionId:
     def test_rejects_empty_string(self) -> None:
         with pytest.raises(ValueError, match="unsafe"):
             _validate_session_id("")
-
-    def test_rejects_129_chars(self) -> None:
-        with pytest.raises(ValueError, match="unsafe"):
-            _validate_session_id("a" * 129)
 
 
 # ---------------------------------------------------------------------------
@@ -204,3 +209,51 @@ class TestSaveSession:
         conv = Conversation(system="sys", session_id=long_id)
         save_session(tmp_path, long_id, conv)
         assert (tmp_path / f"{long_id}.json").is_file()
+
+    def test_long_session_id_is_persisted_under_a_hashed_filename(
+        self, tmp_path: Path
+    ) -> None:
+        long_id = "a" * 211
+        conv = Conversation(system="sys", session_id=long_id)
+
+        save_session(tmp_path, long_id, conv)
+
+        json_files = list(tmp_path.glob("*.json"))
+        assert len(json_files) == 1
+        assert json_files[0].name != f"{long_id}.json"
+        data = json.loads(json_files[0].read_text(encoding="utf-8"))
+        assert data["session_id"] == long_id
+
+    def test_long_session_id_round_trips_through_load_session(
+        self, tmp_path: Path
+    ) -> None:
+        long_id = "slack:" + "w" * 64 + ":" + "c" * 64 + ":" + "t" * 64
+        conv = Conversation(system="sys", session_id=long_id)
+        conv.add_user("hello")
+
+        save_session(tmp_path, long_id, conv)
+        loaded = load_session(tmp_path, long_id)
+
+        assert loaded.session_id == long_id
+        assert "hello" in [message.content for message in loaded.messages()]
+
+    def test_session_exists_supports_long_session_ids(self, tmp_path: Path) -> None:
+        long_id = "x" * 211
+        conv = Conversation(system="sys", session_id=long_id)
+
+        save_session(tmp_path, long_id, conv)
+
+        assert session_exists(tmp_path, long_id) is True
+
+    def test_list_sessions_returns_logical_long_session_ids(
+        self, tmp_path: Path
+    ) -> None:
+        short_id = "short-session"
+        long_id = "y" * 211
+
+        save_session(
+            tmp_path, short_id, Conversation(system="sys", session_id=short_id)
+        )
+        save_session(tmp_path, long_id, Conversation(system="sys", session_id=long_id))
+
+        assert list_sessions(tmp_path) == sorted([short_id, long_id])

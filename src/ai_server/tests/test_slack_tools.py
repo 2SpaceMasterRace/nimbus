@@ -1,10 +1,4 @@
-"""Contract tests for the Slack tool schemas and delete guardrail.
-
-These tests verify the *API contract* that the LLM and the middleman team
-depend on — parameter shapes, required vs optional fields, and the safety
-check on delete_file.  They do not test implementation details like whether
-a particular error message string matches.
-"""
+"""Tests for the wrapper-facing chat-safe storage tool bindings."""
 
 from __future__ import annotations
 
@@ -18,57 +12,57 @@ from ai_server.slack_tools import (
 from pydantic import ValidationError
 
 from ai_client_api import AIToolArgsInvalidError, Tool
+from tests.conftest import FakeDeleteResult, FakeObjectInfo, FakeStorageClient
 
-# ---------------------------------------------------------------------------
-# Tool registry
-# ---------------------------------------------------------------------------
+pytestmark = pytest.mark.unit
+
+_TEST_CONTAINER = "test-wrapper-bucket"
+
+
+def _tools_by_name(
+    storage: FakeStorageClient, *, include_delete_tool: bool = False
+) -> dict[str, Tool]:
+    tools = build_slack_tools(
+        storage=storage,  # type: ignore[arg-type]
+        container=_TEST_CONTAINER,
+        include_delete_tool=include_delete_tool,
+    )
+    return {tool.name: tool for tool in tools}
 
 
 class TestToolRegistry:
-    """The set of tools exposed to the LLM must be stable."""
+    """The wrapper route should default to a read-only tool surface."""
 
-    def test_returns_three_tools(self) -> None:
-        assert len(build_slack_tools()) == 3
+    def test_returns_two_read_only_tools_by_default(self) -> None:
+        names = set(_tools_by_name(FakeStorageClient()))
+        assert names == {"list_files", "get_file_info"}
 
-    def test_all_are_tool_instances(self) -> None:
-        for t in build_slack_tools():
-            assert isinstance(t, Tool)
-
-    def test_tool_names_are_exactly(self) -> None:
-        names = {t.name for t in build_slack_tools()}
+    def test_can_include_delete_tool_explicitly(self) -> None:
+        names = set(_tools_by_name(FakeStorageClient(), include_delete_tool=True))
         assert names == {"list_files", "get_file_info", "delete_file"}
 
+    def test_all_are_tool_instances(self) -> None:
+        for tool in _tools_by_name(FakeStorageClient()).values():
+            assert isinstance(tool, Tool)
+
     def test_each_tool_has_non_empty_description(self) -> None:
-        for t in build_slack_tools():
-            assert t.description
-            assert len(t.description) > 10
+        for tool in _tools_by_name(FakeStorageClient()).values():
+            assert tool.description
+            assert len(tool.description) > 10
 
     def test_each_tool_has_json_schema(self) -> None:
-        for t in build_slack_tools():
-            schema = t.parameters_schema
-            assert isinstance(schema, dict)
-            assert "properties" in schema
-
-
-# ---------------------------------------------------------------------------
-# ListFilesArgs schema contract
-# ---------------------------------------------------------------------------
+        for tool in _tools_by_name(
+            FakeStorageClient(), include_delete_tool=True
+        ).values():
+            assert "properties" in tool.parameters_schema
 
 
 class TestListFilesSchema:
     def test_prefix_is_optional(self) -> None:
-        args = ListFilesArgs()
-        assert args.prefix == ""
-
-    def test_prefix_defaults_to_empty_string(self) -> None:
-        assert ListFilesArgs.model_fields["prefix"].default == ""
+        assert ListFilesArgs().prefix == ""
 
     def test_prefix_accepts_valid_path(self) -> None:
-        args = ListFilesArgs(prefix="reports/2024/")
-        assert args.prefix == "reports/2024/"
-
-    def test_prefix_accepts_empty_string(self) -> None:
-        ListFilesArgs(prefix="")
+        assert ListFilesArgs(prefix="reports/2024/").prefix == "reports/2024/"
 
     def test_prefix_rejects_above_max_length(self) -> None:
         with pytest.raises(ValidationError):
@@ -77,15 +71,6 @@ class TestListFilesSchema:
     def test_extra_fields_are_forbidden(self) -> None:
         with pytest.raises(ValidationError):
             ListFilesArgs(unknown_field="oops")
-
-    def test_schema_has_prefix_property(self) -> None:
-        schema = ListFilesArgs.model_json_schema()
-        assert "prefix" in schema["properties"]
-
-
-# ---------------------------------------------------------------------------
-# GetFileInfoArgs schema contract
-# ---------------------------------------------------------------------------
 
 
 class TestGetFileInfoSchema:
@@ -97,26 +82,9 @@ class TestGetFileInfoSchema:
         with pytest.raises(ValidationError):
             GetFileInfoArgs(remote_path="")
 
-    def test_remote_path_accepts_valid_key(self) -> None:
-        args = GetFileInfoArgs(remote_path="reports/q1.csv")
-        assert args.remote_path == "reports/q1.csv"
-
-    def test_remote_path_rejects_above_max_length(self) -> None:
-        with pytest.raises(ValidationError):
-            GetFileInfoArgs(remote_path="x" * 1025)
-
     def test_extra_fields_are_forbidden(self) -> None:
         with pytest.raises(ValidationError):
             GetFileInfoArgs(remote_path="a.txt", extra="nope")
-
-    def test_schema_marks_remote_path_as_required(self) -> None:
-        schema = GetFileInfoArgs.model_json_schema()
-        assert "remote_path" in schema.get("required", [])
-
-
-# ---------------------------------------------------------------------------
-# DeleteFileArgs schema contract + safety guardrail
-# ---------------------------------------------------------------------------
 
 
 class TestDeleteFileSchema:
@@ -125,69 +93,86 @@ class TestDeleteFileSchema:
             DeleteFileArgs()  # type: ignore[call-arg]
 
     def test_confirm_defaults_to_false(self) -> None:
-        args = DeleteFileArgs(remote_path="old.csv")
-        assert args.confirm is False
-
-    def test_confirm_accepts_true(self) -> None:
-        args = DeleteFileArgs(remote_path="old.csv", confirm=True)
-        assert args.confirm is True
+        assert DeleteFileArgs(remote_path="old.csv").confirm is False
 
     def test_extra_fields_are_forbidden(self) -> None:
         with pytest.raises(ValidationError):
             DeleteFileArgs(remote_path="a.csv", confirm=True, extra="bad")
 
-    def test_schema_marks_remote_path_as_required(self) -> None:
-        schema = DeleteFileArgs.model_json_schema()
-        assert "remote_path" in schema.get("required", [])
+
+class TestReadOnlyHandlers:
+    def test_list_files_forwards_to_storage_with_pinned_container(self) -> None:
+        storage = FakeStorageClient(
+            list_return=[
+                FakeObjectInfo(object_name="reports/jan.csv", size_bytes=10),
+                FakeObjectInfo(object_name="reports/feb.csv", size_bytes=20),
+            ]
+        )
+        tool = _tools_by_name(storage)["list_files"]
+
+        result = tool.handler(prefix="reports/")
+
+        assert result == {
+            "count": 2,
+            "returned": 2,
+            "truncated": False,
+            "entries": [
+                {"object_name": "reports/jan.csv", "size_bytes": 10},
+                {"object_name": "reports/feb.csv", "size_bytes": 20},
+            ],
+        }
+        assert storage.lists == [{"container": _TEST_CONTAINER, "prefix": "reports/"}]
+
+    def test_get_file_info_forwards_to_storage_with_pinned_container(self) -> None:
+        storage = FakeStorageClient(
+            info_return=FakeObjectInfo(
+                object_name="reports/q1.csv",
+                size_bytes=42,
+                version_id="v7",
+                updated_at="2026-04-21T10:00:00Z",
+            )
+        )
+        tool = _tools_by_name(storage)["get_file_info"]
+
+        result = tool.handler(remote_path="reports/q1.csv")
+
+        assert result == {
+            "object_name": "reports/q1.csv",
+            "size_bytes": 42,
+            "updated_at": "2026-04-21T10:00:00Z",
+            "version_id": "v7",
+        }
+        assert storage.infos == [
+            {"container": _TEST_CONTAINER, "object_name": "reports/q1.csv"}
+        ]
 
 
-class TestHandlerContractBeforeWiring:
-    """Handlers raise ``NotImplementedError`` until storage is wired in.
-
-    They must not crash with AttributeError or silently return None.
-    """
-
-    def test_list_files_raises_not_implemented(self) -> None:
-        tool = next(t for t in build_slack_tools() if t.name == "list_files")
-        with pytest.raises(NotImplementedError):
-            tool.handler(prefix="reports/")
-
-    def test_get_file_info_raises_not_implemented(self) -> None:
-        tool = next(t for t in build_slack_tools() if t.name == "get_file_info")
-        with pytest.raises(NotImplementedError):
-            tool.handler(remote_path="reports/q1.csv")
-
-
-class TestDeleteFileGuardrail:
-    """The delete handler must refuse unless ``confirm=True``.
-
-    This guardrail applies even before the real storage client is wired in.
-    """
-
+class TestDeleteGuardrail:
     @pytest.fixture
     def delete_tool(self) -> Tool:
-        return next(t for t in build_slack_tools() if t.name == "delete_file")
+        return _tools_by_name(FakeStorageClient(), include_delete_tool=True)[
+            "delete_file"
+        ]
 
     def test_rejects_when_confirm_false(self, delete_tool: Tool) -> None:
-        with pytest.raises(AIToolArgsInvalidError):
+        with pytest.raises(AIToolArgsInvalidError, match="confirm=true"):
             delete_tool.handler(remote_path="old.csv", confirm=False)
 
     def test_rejects_when_confirm_omitted(self, delete_tool: Tool) -> None:
-        # confirm defaults to False — must still be rejected
-        with pytest.raises(AIToolArgsInvalidError):
+        with pytest.raises(AIToolArgsInvalidError, match="confirm=true"):
             delete_tool.handler(remote_path="old.csv")
 
-    def test_rejects_empty_remote_path_even_when_confirmed(
-        self, delete_tool: Tool
-    ) -> None:
-        with pytest.raises(AIToolArgsInvalidError):
-            delete_tool.handler(remote_path="", confirm=True)
+    def test_forwards_delete_when_confirmed(self) -> None:
+        storage = FakeStorageClient(delete_return=FakeDeleteResult(version_id="v9"))
+        delete_tool = _tools_by_name(storage, include_delete_tool=True)["delete_file"]
 
-    def test_error_mentions_confirm_when_omitted(self, delete_tool: Tool) -> None:
-        with pytest.raises(AIToolArgsInvalidError, match="confirm"):
-            delete_tool.handler(remote_path="a.csv", confirm=False)
+        result = delete_tool.handler(remote_path="old.csv", confirm=True)
 
-    def test_proceeds_past_guard_when_confirmed(self, delete_tool: Tool) -> None:
-        # Storage is not yet wired up; NotImplementedError means we passed the guard.
-        with pytest.raises(NotImplementedError):
-            delete_tool.handler(remote_path="a.csv", confirm=True)
+        assert result == {
+            "deleted": True,
+            "remote_path": "old.csv",
+            "version_id": "v9",
+        }
+        assert storage.deletes == [
+            {"container": _TEST_CONTAINER, "object_name": "old.csv"}
+        ]

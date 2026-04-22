@@ -1,8 +1,13 @@
 """File-based conversation persistence for the AI server.
 
-Each session is stored as a single JSON file at
-``<session_dir>/<session_id>.json``.  Writes are atomic (rename-from-temp)
-so a crash mid-write cannot corrupt the file.
+Each session is stored as a single JSON file under ``session_dir``. Safe,
+short session IDs are used directly as the filename stem. Longer logical
+session IDs are mapped to a deterministic SHA-256-based stem so wrapper-facing
+conversation identities can exceed filesystem-friendly name limits without
+changing the public session identity stored in the JSON payload.
+
+Writes are atomic (rename-from-temp) so a crash mid-write cannot corrupt the
+file.
 
 Concurrency is handled at the router layer via per-session ``asyncio.Lock``
 objects (see ``router._get_session_lock``), which serialise concurrent
@@ -12,6 +17,7 @@ filesystem.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from pathlib import Path  # noqa: TC003
@@ -22,22 +28,38 @@ from ai_client_api import Conversation
 
 # Allow Slack IDs (C0ABC123, U01XYZ, T…), UUIDs, and simple strings.
 # Reject anything that could escape the session directory via path traversal.
-_SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_\-.:]{1,128}$")
+_SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_\-.:]+$")
+_MAX_SESSION_FILENAME_STEM_LENGTH = 128
+_HASHED_SESSION_STEM_PREFIX = "sha256-"
 
 
 def _validate_session_id(session_id: str) -> None:
     """Raise ``ValueError`` if *session_id* contains unsafe characters."""
-    if not _SAFE_SESSION_ID_RE.match(session_id):
+    if not session_id or not _SAFE_SESSION_ID_RE.match(session_id):
         msg = (
-            f"session_id {session_id!r} contains unsafe characters or exceeds "
-            "128 characters.  Only alphanumerics, hyphens, underscores, dots, "
-            "and colons are allowed."
+            f"session_id {session_id!r} contains unsafe characters. Only "
+            "alphanumerics, hyphens, underscores, dots, and colons are allowed."
         )
         raise ValueError(msg)
 
 
+def _session_file_stem(session_id: str) -> str:
+    """Return a filesystem-safe filename stem for a logical session ID."""
+    _validate_session_id(session_id)
+    if len(session_id) <= _MAX_SESSION_FILENAME_STEM_LENGTH:
+        return session_id
+    digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+    return f"{_HASHED_SESSION_STEM_PREFIX}{digest}"
+
+
 def _session_path(session_dir: Path, session_id: str) -> Path:
-    return session_dir / f"{session_id}.json"
+    return session_dir / f"{_session_file_stem(session_id)}.json"
+
+
+def session_exists(session_dir: Path, session_id: str) -> bool:
+    """Return whether a persisted session file exists for *session_id*."""
+    _validate_session_id(session_id)
+    return _session_path(session_dir, session_id).is_file()
 
 
 def load_session(
@@ -141,4 +163,18 @@ def list_sessions(session_dir: Path) -> list[str]:
     """
     if not session_dir.is_dir():
         return []
-    return sorted(p.stem for p in session_dir.iterdir() if p.suffix == ".json")
+
+    session_ids: list[str] = []
+    for path in session_dir.iterdir():
+        if path.suffix != ".json":
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError, TypeError):
+            session_ids.append(path.stem)
+            continue
+        session_id = data.get("session_id")
+        session_ids.append(
+            str(session_id) if isinstance(session_id, str) else path.stem
+        )
+    return sorted(session_ids)

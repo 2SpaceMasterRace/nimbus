@@ -29,6 +29,7 @@ members = [
     "src/ai_client_api",
     "src/openrouter_ai_client_impl",
     "src/ai_server",
+    "src/nimbus_runtime",
 ]
 
 [tool.uv.sources]
@@ -37,6 +38,7 @@ aws-client-service = { workspace = true }
 aws-client-adapter = { workspace = true }
 aws-s3-cloud-storage-service-client = { workspace = true }
 ai-server = { workspace = true }
+nimbus-runtime = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -113,7 +115,9 @@ mypy_path = [
     "src/aws_client_impl",
     "src/aws_client_service",
     "src/aws_client_adapter",
+    "src/aws_s3_cloud_storage_service_client",
     "src/ai_server",
+    "src/nimbus_runtime",
     "src/ai_client_api",
     "src/openrouter_ai_client_impl",
 ]
@@ -128,6 +132,13 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["aws_s3_cloud_storage_service_client.*"]
+# Generated client code is kept in the repo as a build artifact and runtime
+# dependency, but it is not hand-authored domain logic. Keep it visible to mypy
+# via mypy_path, while explicitly opting it out of strict checking.
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests", "src/*/tests"]

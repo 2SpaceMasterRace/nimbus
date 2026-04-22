@@ -145,6 +145,7 @@ The service does not leak raw `boto3` or HTTP exceptions to callers.
 | S3 / boto3 condition | Domain exception |
 |---|---|
 | empty container | `InvalidContainerError` |
+| missing bucket / container | `ContainerNotFoundError` |
 | empty key / leading slash | `InvalidObjectNameError` |
 | invalid file object | `InvalidFileObjectError` |
 | missing object / bucket 404 | `ObjectNotFoundError` |
@@ -155,10 +156,21 @@ The service does not leak raw `boto3` or HTTP exceptions to callers.
 | Domain exception | HTTP status |
 |---|---|
 | `InvalidContainerError` | `400` |
+| `ContainerNotFoundError` | `404` |
 | `InvalidObjectNameError` | `400` |
 | `InvalidFileObjectError` | `400` |
 | `ObjectNotFoundError` | `404` |
 | `StorageBackendError` | `502` |
+
+### OAuth translation
+
+The GitHub OAuth callback distinguishes between three classes of failure:
+
+| Condition | HTTP status |
+|---|---|
+| invalid OAuth state or rejected code | `400` |
+| provider timeout / connectivity failure | `504` |
+| provider returned a bad/non-JSON/failed response | `502` |
 
 ### Adapter translation
 
@@ -229,6 +241,12 @@ Interface compliance is verified in two ways:
    contract.
 
 ## Key Decisions
+
+### Store GitHub access tokens server-side
+
+Reason: browser session cookies should not carry raw OAuth bearer tokens. The
+cookie stores only an opaque session handle; the actual GitHub token lives in a
+server-side token store.
 
 ### Keep `cloud_storage_api` as a clean external dependency
 

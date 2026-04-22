@@ -5,19 +5,24 @@ These tests are **skipped** unless all of these are set:
     export RUN_AI_SERVER_E2E=1
     export AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev
     export AI_SERVER_API_KEY=<the secret from fly secrets>
+    export AI_SERVER_SIGNING_SECRET=<the wrapper signing secret>
 
 Run them with:
 
-    RUN_AI_SERVER_E2E=1 \\
-    AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev \\
-    AI_SERVER_API_KEY=<key> \\
+    RUN_AI_SERVER_E2E=1 \
+    AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev \
+    AI_SERVER_API_KEY=<key> \
+    AI_SERVER_SIGNING_SECRET=<wrapper-secret> \
     uv run pytest src/ai_server/tests/test_e2e.py -v -m e2e
 
 ----------------------------------------------------------------------------
 Slack middleman integration contract
 ----------------------------------------------------------------------------
 
-The Slack bot receives a Slack webhook, ACKs immediately (< 3 s), then calls:
+The Slack bot receives a Slack webhook, ACKs immediately (< 3 s), then calls
+either the legacy path or the canonical wrapper-facing path.
+
+Legacy path:
 
     POST  {AI_SERVER_BASE_URL}/ai/chat
     X-API-Key: {AI_SERVER_API_KEY}
@@ -29,24 +34,33 @@ The Slack bot receives a Slack webhook, ACKs immediately (< 3 s), then calls:
         "user_id":    "<slack user ID>"          // optional but recommended
     }
 
-Success response (HTTP 200):
+Canonical wrapper-facing path:
+
+    POST  {AI_SERVER_BASE_URL}/ai/chat/turn
+    X-Nimbus-Timestamp: <unix seconds>
+    X-Nimbus-Nonce: <single-use nonce>
+    X-Nimbus-Signature: <hex hmac sha256>
 
     {
-        "response":      "<AI reply text to post back to Slack>",
-        "session_id":    "<echoed>",
-        "model":         "<model name used>",
-        "steps":         <int>,
-        "fallback_used": <bool>
+        "platform": "slack",
+        "workspace_id": "T123TEAM",
+        "channel_id": "C123CHAN",
+        "thread_id": "1713840000.123456",
+        "message_id": "1713840000.123456",
+        "user_id": "U123USER",
+        "text": "What files are under reports/?",
+        "idempotency_key": "slack:T123TEAM:event:evt-123",
+        "request_id": "req-slack-evt-123"
     }
 
 Errors the Slack bot must handle:
 
-    401  Invalid/missing API key — server configuration problem, alert on-call.
-    422  Validation error — empty message or unsafe session_id.
-    429  Upstream rate limit — tell user "please try again in a moment".
-    502  Upstream AI error — tell user "the AI is unavailable, try later".
-    503  AI_SERVER_API_KEY not configured on server — alert on-call.
-    504  Upstream timeout — tell user "the AI took too long, try again".
+    401  Invalid/missing auth or signature — server configuration problem.
+    422  Validation error — malformed request shape or unsafe identifiers.
+    429  Upstream/provider or local rate limit — tell user to retry shortly.
+    502  Upstream AI error — tell user the AI is unavailable.
+    503  Server-side auth/config issue — alert on-call.
+    504  Upstream timeout — tell user the AI took too long.
 """
 
 from __future__ import annotations
@@ -55,8 +69,31 @@ import time
 
 import httpx
 import pytest
+from ai_server.wrapper_client import (
+    build_message_event_turn,
+    build_slash_command_turn,
+    encode_turn_body,
+    sign_nimbus_request,
+)
 
 pytestmark = pytest.mark.e2e
+
+
+def _post_signed_turn(
+    *,
+    e2e_base_url: str,
+    signing_secret: str,
+    body: dict[str, object],
+    timeout: float = 60.0,
+) -> httpx.Response:
+    body_bytes = encode_turn_body(body)
+    headers = sign_nimbus_request(body=body_bytes, secret=signing_secret)
+    return httpx.post(
+        f"{e2e_base_url}/ai/chat/turn",
+        content=body_bytes,
+        headers=headers,
+        timeout=timeout,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +199,113 @@ class TestChatE2E:
             timeout=60,
         )
         assert resp.status_code == 200
+
+
+class TestWrapperTurnE2E:
+    def test_wrapper_turn_missing_signed_headers_returns_401(
+        self, e2e_base_url: str
+    ) -> None:
+        resp = httpx.post(
+            f"{e2e_base_url}/ai/chat/turn",
+            json={
+                "platform": "slack",
+                "workspace_id": "T123TEAM",
+                "channel_id": "C123CHAN",
+                "thread_id": "1713840000.123456",
+                "message_id": "1713840000.123456",
+                "user_id": "U123USER",
+                "text": "hi",
+                "idempotency_key": "slack:T123TEAM:event:e2e-missing-headers",
+                "request_id": "req-slack-e2e-missing-headers",
+            },
+            timeout=10,
+        )
+        assert resp.status_code == 401
+
+    def test_signed_wrapper_turn_returns_structured_reply(
+        self, e2e_base_url: str, e2e_signing_secret: str
+    ) -> None:
+        event_id = f"e2e-event-{int(time.time())}"
+        body = build_message_event_turn(
+            workspace_id="T123TEAM",
+            event_id=event_id,
+            event={
+                "channel": "C123CHAN",
+                "ts": str(time.time()),
+                "user": "U123USER",
+                "text": "Reply with exactly one short sentence saying hello.",
+            },
+        )
+
+        resp = _post_signed_turn(
+            e2e_base_url=e2e_base_url,
+            signing_secret=e2e_signing_secret,
+            body=body,
+        )
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["request_id"] == body["request_id"]
+        assert isinstance(payload["conversation_id"], str)
+        assert payload["outcome"] in {
+            "reply",
+            "confirmation_required",
+            "partial_success",
+            "error",
+        }
+        assert isinstance(payload["text"], str)
+
+    def test_signed_slash_command_shape_anchors_to_synthetic_message_id(
+        self, e2e_base_url: str, e2e_signing_secret: str
+    ) -> None:
+        trigger_id = f"trigger-{int(time.time())}"
+        body = build_slash_command_turn(
+            workspace_id="T123TEAM",
+            channel_id="C123CHAN",
+            trigger_id=trigger_id,
+            user_id="U123USER",
+            text="recent",
+        )
+
+        resp = _post_signed_turn(
+            e2e_base_url=e2e_base_url,
+            signing_secret=e2e_signing_secret,
+            body=body,
+        )
+
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["conversation_id"] == f"slack:T123TEAM:C123CHAN:cmd:{trigger_id}"
+
+    def test_signed_wrapper_turn_idempotent_retry_reuses_cached_response(
+        self, e2e_base_url: str, e2e_signing_secret: str
+    ) -> None:
+        event_id = f"e2e-idempotent-{int(time.time())}"
+        body = build_message_event_turn(
+            workspace_id="T123TEAM",
+            event_id=event_id,
+            event={
+                "channel": "C123CHAN",
+                "ts": str(time.time()),
+                "user": "U123USER",
+                "text": "Say hi.",
+            },
+        )
+
+        first = _post_signed_turn(
+            e2e_base_url=e2e_base_url,
+            signing_secret=e2e_signing_secret,
+            body=body,
+        )
+        second = _post_signed_turn(
+            e2e_base_url=e2e_base_url,
+            signing_secret=e2e_signing_secret,
+            body=body,
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json() == second.json()
 
     def test_chat_response_shape(self, e2e_base_url: str, e2e_api_key: str) -> None:
         session_id = f"e2e-shape-{int(time.time())}"

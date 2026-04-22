@@ -25,7 +25,11 @@ from typing import Annotated
 import structlog
 from fastapi import Header, HTTPException, Request, status
 
+from ai_server.request_state import put_state_if_absent
+from nimbus_runtime import runtime_telemetry
+
 _SIGNED_REQUEST_MAX_AGE_SECONDS = 300
+_NONCE_STATE_NAMESPACE = "signed_request_nonces"
 _seen_nonces: dict[str, float] = {}
 _seen_nonces_lock = threading.Lock()
 log = structlog.get_logger()
@@ -74,17 +78,32 @@ def require_api_key(
     expected = os.environ.get("AI_SERVER_API_KEY", "").strip()
     if not expected:
         log.error("api_key_auth_unconfigured")
+        runtime_telemetry.record_auth_result(
+            mechanism="api_key",
+            result="failure",
+            reason="unconfigured",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI_SERVER_API_KEY is not configured on this server.",
         )
     if x_api_key != expected:
         log.warning("api_key_auth_failed")
+        runtime_telemetry.record_auth_result(
+            mechanism="api_key",
+            result="failure",
+            reason="invalid_or_missing",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing API key.",
             headers={"WWW-Authenticate": "API-Key"},
         )
+    runtime_telemetry.record_auth_result(
+        mechanism="api_key",
+        result="success",
+        reason="matched",
+    )
     return x_api_key
 
 
@@ -121,12 +140,22 @@ async def require_signed_service_request(
     secret = _hmac_secret()
     if not secret:
         log.error("signed_request_auth_unconfigured")
+        runtime_telemetry.record_auth_result(
+            mechanism="signed_request",
+            result="failure",
+            reason="unconfigured",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI_SERVER_SIGNING_SECRET is not configured on this server.",
         )
     if not x_nimbus_timestamp or not x_nimbus_nonce or not x_nimbus_signature:
         log.warning("signed_request_missing_headers", path=request.url.path)
+        runtime_telemetry.record_auth_result(
+            mechanism="signed_request",
+            result="failure",
+            reason="missing_headers",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing signed-request headers.",
@@ -135,6 +164,11 @@ async def require_signed_service_request(
         timestamp_int = int(x_nimbus_timestamp)
     except ValueError as exc:
         log.warning("signed_request_invalid_timestamp", path=request.url.path)
+        runtime_telemetry.record_auth_result(
+            mechanism="signed_request",
+            result="failure",
+            reason="invalid_timestamp",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid X-Nimbus-Timestamp header.",
@@ -143,6 +177,11 @@ async def require_signed_service_request(
     now = int(time.time())
     if abs(now - timestamp_int) > _SIGNED_REQUEST_MAX_AGE_SECONDS:
         log.warning("signed_request_stale_timestamp", path=request.url.path)
+        runtime_telemetry.record_auth_result(
+            mechanism="signed_request",
+            result="failure",
+            reason="stale_timestamp",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Signed request timestamp is too old or too far in the future.",
@@ -152,6 +191,11 @@ async def require_signed_service_request(
         _cleanup_seen_nonces(float(now))
         if x_nimbus_nonce in _seen_nonces:
             log.warning("signed_request_replayed_nonce", path=request.url.path)
+            runtime_telemetry.record_auth_result(
+                mechanism="signed_request",
+                result="failure",
+                reason="replayed_nonce_memory",
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Signed request nonce has already been used.",
@@ -168,6 +212,11 @@ async def require_signed_service_request(
     expected = _expected_signature(secret=secret, payload=payload)
     if not hmac.compare_digest(x_nimbus_signature, expected):
         log.warning("signed_request_invalid_signature", path=request.url.path)
+        runtime_telemetry.record_auth_result(
+            mechanism="signed_request",
+            result="failure",
+            reason="invalid_signature",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid signed request.",
@@ -176,11 +225,55 @@ async def require_signed_service_request(
     with _seen_nonces_lock:
         _cleanup_seen_nonces(float(now))
         if x_nimbus_nonce in _seen_nonces:
-            log.warning("signed_request_replayed_nonce", path=request.url.path)
+            log.warning(
+                "signed_request_replayed_nonce",
+                path=request.url.path,
+                state_backend="memory",
+            )
+            runtime_telemetry.record_auth_result(
+                mechanism="signed_request",
+                result="failure",
+                reason="replayed_nonce_memory",
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Signed request nonce has already been used.",
+            )
+        write_result = put_state_if_absent(
+            _NONCE_STATE_NAMESPACE,
+            x_nimbus_nonce,
+            value={
+                "path": request.url.path,
+                "timestamp": x_nimbus_timestamp,
+            },
+            expires_at=float(now + _SIGNED_REQUEST_MAX_AGE_SECONDS),
+        )
+        if write_result.cleaned_entries:
+            log.info(
+                "signed_request_nonce_state_cleaned",
+                path=request.url.path,
+                cleaned_entries=write_result.cleaned_entries,
+            )
+        if not write_result.stored:
+            log.warning(
+                "signed_request_replayed_nonce",
+                path=request.url.path,
+                state_backend="persistent",
+            )
+            runtime_telemetry.record_auth_result(
+                mechanism="signed_request",
+                result="failure",
+                reason="replayed_nonce_persistent",
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Signed request nonce has already been used.",
             )
         _seen_nonces[x_nimbus_nonce] = float(now + _SIGNED_REQUEST_MAX_AGE_SECONDS)
     log.info("signed_request_authenticated", path=request.url.path)
+    runtime_telemetry.record_auth_result(
+        mechanism="signed_request",
+        result="success",
+        reason="validated",
+    )
     return x_nimbus_signature

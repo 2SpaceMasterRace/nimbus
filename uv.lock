@@ -10,6 +10,7 @@ members = [
     "aws-client-impl",
     "aws-client-service",
     "aws-s3-cloud-storage-service-client",
+    "nimbus-runtime",
     "openrouter-ai-client-impl",
     "ospsd-team-2",
 ]
@@ -55,7 +56,10 @@ version = "0.1.0"
 source = { editable = "src/ai_server" }
 dependencies = [
     { name = "ai-client-api" },
+    { name = "aws-client-impl" },
+    { name = "cloud-storage-api" },
     { name = "fastapi" },
+    { name = "nimbus-runtime" },
     { name = "openrouter-ai-client-impl" },
     { name = "structlog" },
 ]
@@ -63,7 +67,10 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "ai-client-api", editable = "src/ai_client_api" },
+    { name = "aws-client-impl", editable = "src/aws_client_impl" },
+    { name = "cloud-storage-api", git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git?rev=v1.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "nimbus-runtime", editable = "src/nimbus_runtime" },
     { name = "openrouter-ai-client-impl", editable = "src/openrouter_ai_client_impl" },
     { name = "structlog", specifier = ">=25.5.0" },
 ]
@@ -2010,6 +2017,25 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/35/d5/cd1ffb202b76ebc1b33c1332a3416e55a39929006982adc2b1eb069aaa9b/nexus_rpc-1.4.0.tar.gz", hash = "sha256:3b8b373d4865671789cc43623e3dc0bcbf192562e40e13727e17f1c149050fba", size = 82367, upload-time = "2026-02-25T22:01:34.053Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/11/52/6327a5f4fda01207205038a106a99848a41c83e933cd23ea2cab3d2ebc6c/nexus_rpc-1.4.0-py3-none-any.whl", hash = "sha256:14c953d3519113f8ccec533a9efdb6b10c28afef75d11cdd6d422640c40b3a49", size = 29645, upload-time = "2026-02-25T22:01:33.122Z" },
+]
+
+[[package]]
+name = "nimbus-runtime"
+version = "0.1.0"
+source = { editable = "src/nimbus_runtime" }
+dependencies = [
+    { name = "ai-client-api" },
+    { name = "cloud-storage-api" },
+    { name = "pydantic" },
+    { name = "structlog" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ai-client-api", editable = "src/ai_client_api" },
+    { name = "cloud-storage-api", git = "https://github.com/2SpaceMasterRace/ospsd-cloud-storage.git?rev=v1.0.0" },
+    { name = "pydantic", specifier = ">=2.9.0" },
+    { name = "structlog", specifier = ">=25.5.0" },
 ]
 
 [[package]]
