@@ -11,6 +11,9 @@ authors = [
     { name = "Nicholas Maspons", email = "nem8891@nyu.edu" },
 ]
 requires-python = ">=3.12"
+dependencies = [
+    "chat-client-api",
+]
 
 [tool.uv]
 package = false
@@ -30,6 +33,7 @@ members = [
     "src/openrouter_ai_client_impl",
     "src/ai_server",
     "src/nimbus_runtime",
+    "src/slack_bridge",
 ]
 
 [tool.uv.sources]
@@ -39,6 +43,8 @@ aws-client-adapter = { workspace = true }
 aws-s3-cloud-storage-service-client = { workspace = true }
 ai-server = { workspace = true }
 nimbus-runtime = { workspace = true }
+slack-bridge = { workspace = true }
+chat-client-api = { git = "https://github.com/HarshithKoriRaj/Shared-API.git" }
 
 [dependency-groups]
 dev = [
@@ -120,6 +126,7 @@ mypy_path = [
     "src/nimbus_runtime",
     "src/ai_client_api",
     "src/openrouter_ai_client_impl",
+    "src/slack_bridge",
 ]
 
 [[tool.mypy.overrides]]

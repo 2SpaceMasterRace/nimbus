@@ -1,0 +1,26 @@
+[project]
+name = "slack-bridge"
+version = "0.1.0"
+description = "Slack inbound bridge for Nimbus — receives Slack events and forwards them to /ai/chat/turn"
+requires-python = ">=3.12"
+dependencies = [
+    "nimbus-runtime",
+    "chat-client-api",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "httpx>=0.27.0",
+    "python-dotenv>=1.0.0",
+    "structlog>=25.0.0",
+    "slack-sdk>=3.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["slack_bridge"]
+
+[tool.uv.sources]
+nimbus-runtime = { workspace = true }
+chat-client-api = { git = "https://github.com/HarshithKoriRaj/Shared-API.git" }
