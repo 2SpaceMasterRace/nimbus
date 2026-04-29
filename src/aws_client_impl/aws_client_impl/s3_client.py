@@ -38,7 +38,14 @@ class S3Client(CloudStorageClient):
     with respect to AWS credentials and network access.
     """
 
-    def __init__(self, region_name: str = "us-east-1") -> None:
+    def __init__(
+        self,
+        region_name: str = "us-east-1",
+        *,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+    ) -> None:
         """Initialize S3Client with the AWS region.
 
         No network calls are made here. The boto3 session and S3 client are
@@ -47,9 +54,18 @@ class S3Client(CloudStorageClient):
 
         Args:
             region_name: AWS region name. Defaults to 'us-east-1'.
+            aws_access_key_id: Optional explicit access key for tenant-scoped
+                clients. When omitted, boto3 uses its normal provider chain.
+            aws_secret_access_key: Optional explicit secret key for
+                tenant-scoped clients.
+            aws_session_token: Optional explicit session token for temporary
+                credentials.
 
         """
         self._region_name = region_name
+        self._aws_access_key_id = aws_access_key_id
+        self._aws_secret_access_key = aws_secret_access_key
+        self._aws_session_token = aws_session_token
 
     @property
     def _s3_client(self) -> Any:  # noqa: ANN401  # boto3.Session.client() has no precise stub; the return type is a dynamic ServiceClient with no public type annotation
@@ -84,8 +100,7 @@ class S3Client(CloudStorageClient):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
-            InvalidObjectNameError: If remote_path is empty or starts with a
-                leading slash.
+            InvalidObjectNameError: If remote_path is empty or starts with a slash.
             LocalFileAccessError: If local_path cannot be read.
             StorageBackendError: If the upload fails due to AWS service errors.
 
@@ -575,7 +590,18 @@ class S3Client(CloudStorageClient):
     # Helpers
     def _get_session(self) -> boto3.Session:
         """Create and return a boto3 Session for the configured region."""
-        return boto3.Session(region_name=self._region_name)
+        if (
+            self._aws_access_key_id is None
+            and self._aws_secret_access_key is None
+            and self._aws_session_token is None
+        ):
+            return boto3.Session(region_name=self._region_name)
+        return boto3.Session(
+            region_name=self._region_name,
+            aws_access_key_id=self._aws_access_key_id,
+            aws_secret_access_key=self._aws_secret_access_key,
+            aws_session_token=self._aws_session_token,
+        )
 
     def get_session(self) -> boto3.Session:  # pragma: no cover
         """Return a boto3 Session for the configured region."""

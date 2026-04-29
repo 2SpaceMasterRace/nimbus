@@ -2,113 +2,57 @@
 
 from __future__ import annotations
 
-import shutil
-from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from aws_client_adapter.service_adapter import CloudStorageServiceAdapter
 from aws_client_adapter.service_adapter import (
     get_client_impl as get_adapter_client_impl,
 )
+from aws_client_service.deps import require_oauth_session
 from aws_client_service.main import app, get_storage_client
-from cloud_storage_api import CloudStorageClient, DeleteResult, ObjectInfo
+from cloud_storage_api import (
+    AuthenticationError,
+    CloudStorageClient,
+    ContainerNotFoundError,
+    ObjectInfo,
+    StorageBackendError,
+)
 from fastapi.testclient import TestClient
 
 from aws_s3_cloud_storage_service_client import AuthenticatedClient
-
-if TYPE_CHECKING:
-    from typing import BinaryIO
+from test_support.storage_fakes import FileBackedStorageClient
 
 pytestmark = pytest.mark.integration
 
+API_KEY = "test-token"
 
-class FileBackedStorageClient(CloudStorageClient):
-    """Simple container-aware storage fake used for adapter integration tests."""
 
-    def __init__(self, root: Path) -> None:
-        """Initialize the storage root for test objects."""
-        self._root = root
-        self._root.mkdir(parents=True, exist_ok=True)
-
-    def _resolve_path(self, container: str, object_name: str) -> Path:
-        """Resolve a container/object pair into a safe local filesystem path."""
-        object_path = PurePosixPath(object_name)
-        if ".." in object_path.parts:
-            msg = "Path traversal is not allowed"
-            raise ValueError(msg)
-
-        return self._root.joinpath(container, *object_path.parts)
-
-    def upload_file(
-        self, container: str, local_path: str, remote_path: str
-    ) -> ObjectInfo:
-        """Upload a local file into the file-backed test storage."""
-        source = Path(local_path)
-        destination = self._resolve_path(container, remote_path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, destination)
-        return ObjectInfo(object_name=remote_path, size_bytes=source.stat().st_size)
-
-    def upload_obj(
-        self, container: str, file_obj: BinaryIO, remote_path: str
-    ) -> ObjectInfo:
-        """Upload a file-like object into the file-backed test storage."""
-        destination = self._resolve_path(container, remote_path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        data = file_obj.read()
-        destination.write_bytes(data)
-        return ObjectInfo(object_name=remote_path, size_bytes=len(data))
-
-    def download_file(
-        self, container: str, object_name: str, file_name: str
-    ) -> ObjectInfo:
-        """Download an object from test storage into a local file path."""
-        source = self._resolve_path(container, object_name)
-        if not source.exists():
-            msg = f"Object '{object_name}' not found"
-            raise FileNotFoundError(msg)
-
-        destination = Path(file_name)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, destination)
-        return ObjectInfo(object_name=object_name, size_bytes=source.stat().st_size)
+class _ContainerMissingStorageClient(FileBackedStorageClient):
+    """Storage fake that reports a missing container through the domain API."""
 
     def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
-        """List files in a container with an optional prefix filter."""
-        container_root = self._root / container
-        if not container_root.exists():
-            return []
+        """Report the container as missing."""
+        msg = f"Container '{container}' not found"
+        raise ContainerNotFoundError(msg)
 
-        return sorted(
-            (
-                ObjectInfo(
-                    object_name=path.relative_to(container_root).as_posix(),
-                    size_bytes=path.stat().st_size,
-                )
-                for path in container_root.rglob("*")
-                if path.is_file()
-                and path.relative_to(container_root).as_posix().startswith(prefix)
-            ),
-            key=lambda info: info.object_name,
-        )
 
-    def delete_file(self, container: str, object_name: str) -> DeleteResult:
-        """Delete an object from the file-backed test storage."""
-        target = self._resolve_path(container, object_name)
-        if not target.exists():
-            return DeleteResult(deleted=False, version_id=None, request_charged=None)
+class _AuthFailingStorageClient(FileBackedStorageClient):
+    """Storage fake that reports an authentication failure."""
 
-        target.unlink()
-        return DeleteResult(deleted=True, version_id=None, request_charged=None)
+    def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
+        """Report authentication failure."""
+        msg = "Storage credentials rejected"
+        raise AuthenticationError(msg)
 
-    def get_file_info(self, container: str, object_name: str) -> ObjectInfo:
-        """Return metadata for a stored object."""
-        target = self._resolve_path(container, object_name)
-        if not target.exists():
-            msg = f"Object '{object_name}' not found"
-            raise FileNotFoundError(msg)
-        return ObjectInfo(object_name=object_name, size_bytes=target.stat().st_size)
+
+class _BackendFailingStorageClient(FileBackedStorageClient):
+    """Storage fake that reports a backend failure."""
+
+    def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
+        """Report a backend failure."""
+        msg = "Upstream storage unavailable"
+        raise StorageBackendError(msg)
 
 
 @pytest.mark.circleci
@@ -123,13 +67,38 @@ def test_adapter_get_client_impl_returns_http_backed_client(
     assert isinstance(client, CloudStorageServiceAdapter)
 
 
+def _build_adapter_client() -> AuthenticatedClient:
+    """Create a generated client configured for the in-process test server."""
+    return AuthenticatedClient(base_url="http://testserver", token=API_KEY)
+
+
+def _bind_test_client(
+    generated_client: AuthenticatedClient,
+    test_client: TestClient,
+    *,
+    token: str,
+) -> CloudStorageServiceAdapter:
+    """Bind auth headers to the in-process client and return an adapter."""
+    test_client.headers["Authorization"] = f"Bearer {token}"
+    generated_client.set_httpx_client(test_client)
+    return CloudStorageServiceAdapter(generated_client)
+
+
 @pytest.mark.circleci
-def test_service_adapter_exercises_real_service_path(tmp_path: Path) -> None:
-    """The adapter works end-to-end against the real FastAPI service."""
+def test_service_adapter_preserves_storage_invariants_across_sequence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adapter + service preserve core storage invariants across a workflow."""
     storage_root = tmp_path / "storage"
-    source_file = tmp_path / "source.txt"
+    source_a = tmp_path / "report-a.txt"
+    source_b = tmp_path / "report-b.txt"
     download_target = tmp_path / "downloaded.txt"
-    source_file.write_text("hello from adapter")
+    source_a.write_text("alpha payload")
+    source_b.write_text("beta payload")
+
+    monkeypatch.setenv("API_KEY", API_KEY)
+    app.dependency_overrides.pop(require_oauth_session, None)
 
     app.dependency_overrides[get_storage_client] = lambda: FileBackedStorageClient(
         storage_root
@@ -137,37 +106,129 @@ def test_service_adapter_exercises_real_service_path(tmp_path: Path) -> None:
 
     try:
         with TestClient(app) as test_client:
-            generated_client = AuthenticatedClient(
-                base_url="http://testserver",
-                token="test-token",  # noqa: S106 - test-only token for in-process integration test
+            generated_client = _build_adapter_client()
+            adapter = _bind_test_client(
+                generated_client,
+                test_client,
+                token=API_KEY,
             )
-            generated_client.set_httpx_client(test_client)
-            adapter = CloudStorageServiceAdapter(generated_client)
 
-            upload_result = adapter.upload_file(
+            upload_a = adapter.upload_file(
                 "demo-bucket",
-                str(source_file),
-                "nested/source.txt",
+                str(source_a),
+                "nested/report-a.txt",
             )
-            assert isinstance(upload_result, ObjectInfo)
-            assert upload_result.object_name == "nested/source.txt"
+            upload_b = adapter.upload_file(
+                "demo-bucket",
+                str(source_b),
+                "nested/report-b.txt",
+            )
+            assert upload_a.object_name == "nested/report-a.txt"
+            assert upload_b.object_name == "nested/report-b.txt"
 
             listed = adapter.list_files("demo-bucket", "nested/")
-            assert len(listed) == 1
-            assert listed[0].object_name == "nested/source.txt"
+            assert [info.object_name for info in listed] == [
+                "nested/report-a.txt",
+                "nested/report-b.txt",
+            ]
+            assert [info.size_bytes for info in listed] == [
+                len("alpha payload"),
+                len("beta payload"),
+            ]
+
+            info = adapter.get_file_info("demo-bucket", "nested/report-a.txt")
+            assert info == listed[0]
 
             download_result = adapter.download_file(
                 "demo-bucket",
-                "nested/source.txt",
+                "nested/report-a.txt",
                 str(download_target),
             )
             assert isinstance(download_result, ObjectInfo)
-            assert download_target.read_text() == "hello from adapter"
+            assert download_target.read_text() == "alpha payload"
+            assert download_result.object_name == "nested/report-a.txt"
 
-            delete_result = adapter.delete_file("demo-bucket", "nested/source.txt")
-            assert isinstance(delete_result, dict)
+            delete_result = adapter.delete_file("demo-bucket", "nested/report-a.txt")
             assert delete_result["deleted"] is True
 
-            assert adapter.list_files("demo-bucket", "") == []
+            # Antithesis-style invariant: deleting a missing object is stable.
+            repeated_delete = adapter.delete_file("demo-bucket", "nested/report-a.txt")
+            assert repeated_delete == {
+                "deleted": False,
+                "version_id": None,
+                "request_charged": None,
+            }
+
+            remaining = adapter.list_files("demo-bucket", "")
+            assert [info.object_name for info in remaining] == ["nested/report-b.txt"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.circleci
+def test_service_adapter_requires_valid_api_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Authentication failures survive the service hop as domain errors."""
+    monkeypatch.setenv("API_KEY", API_KEY)
+    app.dependency_overrides.pop(require_oauth_session, None)
+    app.dependency_overrides[get_storage_client] = lambda: FileBackedStorageClient(
+        tmp_path / "storage"
+    )
+
+    try:
+        with TestClient(app) as test_client:
+            wrong_token = "wrong-token"
+            generated_client = AuthenticatedClient(
+                base_url="http://testserver",
+                token=wrong_token,
+            )
+            adapter = _bind_test_client(
+                generated_client,
+                test_client,
+                token=wrong_token,
+            )
+
+            with pytest.raises(AuthenticationError, match="Authentication required"):
+                adapter.list_files("demo-bucket", "")
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.circleci
+@pytest.mark.parametrize(
+    ("storage_cls", "expected_exception", "message"),
+    [
+        (_ContainerMissingStorageClient, ContainerNotFoundError, "Container"),
+        (_AuthFailingStorageClient, AuthenticationError, "Storage credentials"),
+        (_BackendFailingStorageClient, StorageBackendError, "List files failed"),
+    ],
+)
+def test_service_adapter_preserves_service_failure_classification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    storage_cls: type[FileBackedStorageClient],
+    expected_exception: type[Exception],
+    message: str,
+) -> None:
+    """Adapter preserves container/auth/backend failures across HTTP transport."""
+    monkeypatch.setenv("API_KEY", API_KEY)
+    app.dependency_overrides.pop(require_oauth_session, None)
+    app.dependency_overrides[get_storage_client] = lambda: storage_cls(
+        tmp_path / "storage"
+    )
+
+    try:
+        with TestClient(app) as test_client:
+            generated_client = _build_adapter_client()
+            adapter = _bind_test_client(
+                generated_client,
+                test_client,
+                token=API_KEY,
+            )
+
+            with pytest.raises(expected_exception, match=message):
+                adapter.list_files("demo-bucket", "")
     finally:
         app.dependency_overrides.clear()

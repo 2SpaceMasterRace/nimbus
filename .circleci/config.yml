@@ -4,46 +4,61 @@ version: 2.1
 executors:
   python-executor:
     docker:
-      - image: cimg/python:3.14.3
+      - image: cimg/python:3.12.11
+    environment:
+      UV_PYTHON_DOWNLOADS: never
 
-orbs:
-  aws-cli: circleci/aws-cli@5.4.1
 #Modular Commands 
 commands:
   setup-uv:
     description: "Installs and configures uv - our package manager"
     steps:
+      - restore_cache:
+          keys:
+            - uv-cli-v2-{{ arch }}
       - run: 
           name: Install uv
           command: |
+            if [ -x "$HOME/.cargo/bin/uv" ]; then
+              echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> $BASH_ENV
+              source $BASH_ENV
+              uv --version
+              exit 0
+            fi
             curl -LsSf https://astral.sh/uv/install.sh | sh
             echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> $BASH_ENV
             source $BASH_ENV
-  
+            uv --version
+      - save_cache:
+          key: uv-cli-v2-{{ arch }}
+          paths:
+            - ~/.cargo/bin/uv
+            - ~/.cargo/bin/uvx
+
+  restore-uv-cache:
+    description: "Restore cached uv artifacts"
+    steps:
+      - restore_cache:
+          keys:
+            - uv-cache-v2-py312-{{ arch }}-{{ checksum "uv.lock" }}
+
+  save-uv-cache:
+    description: "Save cached uv artifacts"
+    steps:
+      - save_cache:
+          key: uv-cache-v2-py312-{{ arch }}-{{ checksum "uv.lock" }}
+          paths:
+            - ~/.cache/uv
+
   install-dependencies:
     description: "Use UV to install the dependencies"
     steps:
       - run:
           name: Sync dependencies
-          command: uv sync --all-packages --all-groups
-  aws-setup:
-    description: "Set up AWS CLI with the provided credentials"
-    steps:
-      - aws-cli/setup:
-          role_arn: ${AWS_ROLE_ARN}
-          region: ${AWS_REGION}
-          role_session_name: "ospsd-session"
-          session_duration: "1800"
-  fly-setup:
-    description: "Install and configure flyctl"
-    steps:
-      - run:
-          name: Install flyctl
           command: |
-            curl -L https://fly.io/install.sh | sh
-            echo 'export FLYCTL_INSTALL="$HOME/.flyctl"' >> $BASH_ENV
-            echo 'export PATH="$HOME/.flyctl/bin:$PATH"' >> $BASH_ENV
-            source $BASH_ENV
+            python_path="$(command -v python)"
+            "$python_path" -c 'import sys; print(sys.executable); print(sys.version); raise SystemExit(0 if sys.version_info >= (3, 12) else 1)'
+            uv sync --frozen --all-packages --all-groups --python "$python_path"
 
 jobs:
   lint:
@@ -51,7 +66,9 @@ jobs:
     steps:
       - checkout
       - setup-uv
+      - restore-uv-cache
       - install-dependencies
+      - save-uv-cache
       - run: 
           name: Ruff Check
           command: |
@@ -62,100 +79,297 @@ jobs:
       - run:
           name: Mypy — strict type checking
           command: uv run mypy --strict .
-  
-  unit-tests:
+
+  docs-build:
     executor: python-executor
     steps:
       - checkout
       - setup-uv
+      - restore-uv-cache
       - install-dependencies
       - run:
-          name: Run component unit tests with coverage
+          name: Build Sphinx docs
           command: |
-            uv run pytest \
-              src/ \
-              --junitxml=test-results/unit/results.xml \
-              --cov-report=xml:coverage/unit-coverage.xml \
-              --cov-report=html:coverage/unit-html \
-              -v
+            uv run sphinx-build docs/source docs/build/html
+            test -f docs/build/html/index.html
+      - store_artifacts:
+          path: docs/build/html
+          destination: docs/html
+  
+  unit-tests:
+    executor: python-executor
+    parallelism: 4
+    steps:
+      - checkout
+      - setup-uv
+      - restore-uv-cache
+      - install-dependencies
+      - run:
+          name: Split and run component unit tests with coverage
+          command: |
+            mkdir -p coverage-data test-results/unit split-tests
+            circleci tests glob "src/**/tests/test_*.py" | circleci tests run \
+              --command="xargs -n 1 echo > split-tests/unit-${CIRCLE_NODE_INDEX}.txt" \
+              --split-by=timings \
+              --timings-type=filename \
+              --verbose
+            if [ ! -s "split-tests/unit-${CIRCLE_NODE_INDEX}.txt" ]; then
+              touch "coverage-data/.coverage.unit.${CIRCLE_NODE_INDEX}.empty"
+              exit 0
+            fi
+            xargs uv run coverage run --data-file="coverage-data/.coverage.unit.${CIRCLE_NODE_INDEX}" -m pytest \
+              -o addopts="--import-mode=importlib" \
+              -m "unit or regression" \
+              --junitxml="test-results/unit/results-${CIRCLE_NODE_INDEX}.xml" \
+              -q < "split-tests/unit-${CIRCLE_NODE_INDEX}.txt"
       - store_test_results:
           path: test-results/unit
-      - store_artifacts:
-          path: coverage/unit-html
-          destination: coverage/unit
+      - persist_to_workspace:
+          root: .
+          paths:
+            - coverage-data
+  property-tests:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - restore-uv-cache
+      - install-dependencies
+      - run:
+          name: Run Hypothesis property-based tests
+          command: |
+            mkdir -p coverage-data test-results/property
+            uv run coverage run --data-file=coverage-data/.coverage.property -m pytest \
+              -o addopts="--import-mode=importlib" \
+              -m property \
+              --junitxml=test-results/property/results.xml \
+              -q
+      - store_test_results:
+          path: test-results/property
+      - persist_to_workspace:
+          root: .
+          paths:
+            - coverage-data
+
+  fuzz-smoke:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - restore-uv-cache
+      - install-dependencies
+      - run:
+          name: Fuzz smoke — conversation deserialisation
+          command: PYTHONFUZZ_NO_ATHERIS=1 uv run python fuzz/fuzz_conversation.py
+      - run:
+          name: Fuzz smoke — session-ID validation
+          command: PYTHONFUZZ_NO_ATHERIS=1 uv run python fuzz/fuzz_session_id.py
+      - run:
+          name: Fuzz smoke — request-state deserialisation
+          command: PYTHONFUZZ_NO_ATHERIS=1 uv run python fuzz/fuzz_request_state.py
+
+  bdd-tests:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - restore-uv-cache
+      - install-dependencies
+      - run:
+          name: Run BDD acceptance tests
+          command: |
+            mkdir -p test-results/bdd
+            uv run pytest \
+              -o addopts="--import-mode=importlib" \
+              tests/bdd \
+              --junitxml=test-results/bdd/results.xml \
+              -q --no-cov
+      - store_test_results:
+          path: test-results/bdd
+
   integration-tests:
     executor: python-executor
     steps:
       - checkout
       - setup-uv
+      - restore-uv-cache
       - install-dependencies
       - run:
           name: Run integration tests (DI wiring verification)
           command: |
-            uv run pytest \
+            mkdir -p coverage-data test-results/integration
+            uv run coverage run --data-file=coverage-data/.coverage.integration -m pytest \
+              -o addopts="--import-mode=importlib" \
               tests/integration/ \
               --junitxml=test-results/integration/results.xml \
-              --cov-report=xml:coverage/integration-coverage.xml \
-              --cov-report=html:coverage/integration-html \
-              --cov-fail-under=0 \
-              -v
+              -q
       - store_test_results:
           path: test-results/integration
-      - store_artifacts:
-          path: coverage/integration-html
-          destination: coverage/integration
+      - persist_to_workspace:
+          root: .
+          paths:
+            - coverage-data
 
   e2e-tests:
     executor: python-executor
     steps:
       - checkout
       - setup-uv
+      - restore-uv-cache
       - install-dependencies
-      - aws-setup
       - run:
-          name: Run E2E tests against real AWS infrastructure
+          name: Run CircleCI-safe E2E tests
           command: |
+            mkdir -p test-results/e2e
             uv run pytest \
+              -o addopts="--import-mode=importlib" \
               tests/e2e \
+              -m "e2e and circleci and not local_credentials" \
               --junitxml=test-results/e2e/results.xml \
-              --cov-report=xml:coverage/e2e-coverage.xml \
-              --cov-report=html:coverage/e2e-html \
-              --cov-fail-under=0 \
-              -v
+              -q
       - store_test_results:
           path: test-results/e2e
-      - store_artifacts:
-          path: coverage/e2e-html
-          destination: coverage/e2e
 
-  deploy-fly:
+  coverage-gate:
     executor: python-executor
     steps:
       - checkout
-      - fly-setup
+      - setup-uv
+      - attach_workspace:
+          at: .
       - run:
-          name: Deploy to Fly.io
+          name: Combine coverage and enforce project threshold
           command: |
-            flyctl deploy --remote-only --config fly.toml
+            mkdir -p coverage
+            python_path="$(command -v python)"
+            uvx --python "$python_path" --from coverage coverage combine --data-file=.coverage coverage-data/.coverage.*
+            uvx --python "$python_path" --from coverage coverage report
+            uvx --python "$python_path" --from coverage coverage xml --data-file=.coverage -o coverage/combined-coverage.xml
+            uvx --python "$python_path" --from coverage coverage html --data-file=.coverage -d coverage/combined-html
+      - store_artifacts:
+          path: coverage/combined-html
+          destination: coverage/combined
+
+  security-ci:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - restore-uv-cache
+      - install-dependencies
+      - run:
+          name: Prepare security report directory
+          command: |
+            mkdir -p security-reports "$HOME/bin"
+            uv export --all-packages --all-groups --format requirements-txt --output-file security-reports/requirements.txt
+      - run:
+          name: truffleHog — verified secret scan
+          command: |
+            curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b "$HOME/bin" latest
+            "$HOME/bin/trufflehog" git file://. --only-verified --fail --json > security-reports/trufflehog.json
+      - run:
+          name: Semgrep CE — SAST
+          command: |
+            uvx semgrep scan --config p/python --config p/secrets --json --output security-reports/semgrep.json --error
+      - run:
+          name: Safety — dependency vulnerability scan
+          command: |
+            uvx safety check --file security-reports/requirements.txt --full-report
+      - run:
+          name: Bandit — Python security scan
+          command: |
+            uvx bandit -r src -f json -o security-reports/bandit.json
+      - run:
+          name: Generate CycloneDX SBOM
+          command: |
+            uvx --from cyclonedx-bom cyclonedx-py requirements security-reports/requirements.txt -o security-reports/cyclonedx.json
+      - run:
+          name: GuardDog — report only until baseline is clean
+          command: |
+            uvx guarddog pypi scan -r security-reports/requirements.txt --json > security-reports/guarddog.json || true
+      - store_artifacts:
+          path: security-reports
+          destination: security
+
+  deploy-render-production:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - restore-uv-cache
+      - install-dependencies
+      - run:
+          name: Trigger Render production deploy hook
+          command: |
+            : "${RENDER_PRODUCTION_DEPLOY_HOOK_URL:?Set in the render-production CircleCI context}"
+            curl -fsS -X POST "$RENDER_PRODUCTION_DEPLOY_HOOK_URL"
+      - run:
+          name: Wait for Render readiness
+          command: |
+            : "${RENDER_PRODUCTION_BASE_URL:?Set in the render-production CircleCI context}"
+            mkdir -p deploy-reports
+            base_url="${RENDER_PRODUCTION_BASE_URL%/}"
+            attempt=1
+            max_attempts=30
+            until curl -fsS "$base_url/ready" > deploy-reports/render-ready.json; do
+              if [ "$attempt" -ge "$max_attempts" ]; then
+                echo "Timed out waiting for $base_url/ready"
+                curl -fsS "$base_url/health" || true
+                exit 1
+              fi
+              sleep 10
+              attempt=$((attempt + 1))
+            done
+            cat deploy-reports/render-ready.json
+      - run:
+          name: Verify deployed Nimbus routes
+          command: |
+            : "${RENDER_PRODUCTION_BASE_URL:?Set in the render-production CircleCI context}"
+            : "${AI_SERVER_SIGNING_SECRET:?Set in the render-production CircleCI context}"
+            uv run python scripts/ci/verify_deployed_nimbus.py \
+              --base-url "$RENDER_PRODUCTION_BASE_URL" \
+              --signing-secret "$AI_SERVER_SIGNING_SECRET"
+      - store_artifacts:
+          path: deploy-reports/render-ready.json
+          destination: render/ready.json
 
 workflows:
   main:
     jobs:
       - lint
-      - unit-tests:
-          requires:
-            - lint
-      - integration-tests:
+      - docs-build
+      - unit-tests
+      - property-tests
+      - fuzz-smoke
+      - bdd-tests
+      - integration-tests
+      - coverage-gate:
           requires:
             - unit-tests
-      - e2e-tests:
-          context: aws-ospsd
-          requires:
+            - property-tests
+            - bdd-tests
             - integration-tests
-      - deploy-fly:
-          context: flyio
+      - e2e-tests:
           requires:
+            - lint
+            - coverage-gate
+          filters:
+            branches:
+              only: hw-3
+      - security-ci:
+          requires:
+            - lint
+            - docs-build
+            - coverage-gate
             - e2e-tests
           filters:
             branches:
-              only: hw-2
+              only: hw-3
+      - deploy-render-production:
+          context:
+            - render-production
+          requires:
+            - security-ci
+          filters:
+            branches:
+              only: hw-3

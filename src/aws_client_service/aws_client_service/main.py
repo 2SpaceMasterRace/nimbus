@@ -10,7 +10,10 @@ from datetime import (
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
+import sentry_sdk
 import structlog
+from ai_server.router import readiness_failures as ai_readiness_failures
+from ai_server.router import router as ai_router
 from cloud_storage_api import (
     AuthenticationError,
     CloudStorageClient,
@@ -22,24 +25,34 @@ from cloud_storage_api import (
     StorageBackendError,
 )
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, status
 from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
 from aws_client_service.deps import require_oauth_session
+from aws_client_service.otel import configure_opentelemetry
 from aws_client_service.routes.auth import router as auth_router
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    traces_sample_rate=1.0,
+    environment=os.getenv("ENVIRONMENT", "development"),
+)
 
 from aws_client_impl.s3_client import get_client_impl  # noqa: E402, I001  # env must be loaded before constructing the client
 
 log: Any = structlog.get_logger()
 
+configure_opentelemetry("ospsd-team-2")
 app = FastAPI(title="AWS S3 Cloud Storage Service", version="0.1.0")
+FastAPIInstrumentor.instrument_app(app)
 SPHINX_HTML_DIR = Path(__file__).resolve().parents[3] / "docs" / "build" / "html"
 
 app.add_middleware(
@@ -48,6 +61,7 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(ai_router, prefix="/ai")
 
 if SPHINX_HTML_DIR.exists():
     app.mount(
@@ -108,6 +122,31 @@ def remove_temp_file(path: str) -> None:
 async def health() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> dict[str, object]:
+    """Readiness probe for Render health-gated deployments."""
+    failures = [
+        f"missing env var: {name}"
+        for name in ("SESSION_SECRET_KEY", "API_KEY")
+        if not os.environ.get(name, "").strip()
+    ]
+    failures.extend(ai_readiness_failures())
+    if failures:
+        log.warning("readiness_check_failed", failures=failures)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "not_ready", "failures": failures},
+        )
+    return {"status": "ready", "service": "aws-client-service"}
+
+
+@app.get("/sentry-debug")
+async def trigger_error() -> None:
+    """Raise a deliberate exception to verify Sentry reporting."""
+    msg = "Intentional Sentry debug exception."
+    raise RuntimeError(msg)
 
 
 @app.get("/")

@@ -1,0 +1,241 @@
+# Render Blueprint for the Nimbus HW3 deployment.
+# Docs:
+# - https://render.com/docs/blueprint-spec
+# - https://render.com/docs/infrastructure-as-code
+# - https://render.com/docs/deploy-hooks
+# - https://render.com/docs/health-checks
+
+projects:
+  - name: nimbus
+    environments:
+      - name: staging
+        networking:
+          isolation: enabled
+        permissions:
+          protection: disabled
+        databases:
+          - name: nimbus-staging-postgres
+            databaseName: nimbus_staging
+            user: nimbus
+            region: virginia
+            plan: free
+            ipAllowList: []
+        services:
+          - type: web
+            name: nimbus-staging
+            runtime: docker
+            branch: hw3-stage
+            region: virginia
+            plan: free
+            dockerfilePath: ./Dockerfile
+            dockerCommand: sh scripts/render/start.sh
+            autoDeploy: true
+            healthCheckPath: /ready
+            envVars:
+              - key: ENVIRONMENT
+                value: staging
+              - key: PORT
+                value: "8080"
+              - key: NIMBUS_STATE_BACKEND
+                value: postgres
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: nimbus-staging-postgres
+                  property: connectionString
+              - key: SESSION_SECRET_KEY
+                generateValue: true
+              - key: API_KEY
+                generateValue: true
+              - key: AI_SERVER_API_KEY
+                generateValue: true
+              - key: AI_SERVER_SIGNING_SECRET
+                sync: false
+              - key: AWS_ACCESS_KEY_ID
+                sync: false
+              - key: AWS_SECRET_ACCESS_KEY
+                sync: false
+              - key: AWS_REGION
+                sync: false
+              - key: AWS_BUCKET_NAME
+                sync: false
+              - key: NIMBUS_CONTAINER
+                sync: false
+              - key: OPENROUTER_API_KEY
+                sync: false
+              - key: OPENROUTER_MODEL
+                sync: false
+              - key: OPENROUTER_FALLBACK_MODEL
+                sync: false
+              - key: NEW_RELIC_LICENSE_KEY
+                sync: false
+              - key: OTEL_EXPORTER_OTLP_ENDPOINT
+                sync: false
+              - key: SENTRY_DSN
+                sync: false
+
+          - type: web
+            name: nimbus-slack-staging
+            runtime: docker
+            branch: hw3-stage
+            region: virginia
+            plan: starter
+            dockerfilePath: ./Dockerfile
+            dockerCommand: sh scripts/render/start-slack.sh
+            autoDeploy: true
+            healthCheckPath: /health
+            disk:
+              name: nimbus-slack-state
+              mountPath: /var/data/nimbus-slack
+              sizeGB: 1
+            envVars:
+              - key: ENVIRONMENT
+                value: staging
+              - key: PORT
+                value: "8080"
+              - key: AI_SERVER_BASE_URL
+                value: https://nimbus-staging.onrender.com
+              - key: AI_SERVER_SIGNING_SECRET
+                sync: false
+              - key: SLACK_SIGNING_SECRET
+                sync: false
+              - key: SLACK_CLIENT_ID
+                sync: false
+              - key: SLACK_CLIENT_SECRET
+                sync: false
+              - key: NIMBUS_SLACK_PUBLIC_BASE_URL
+                value: https://nimbus-slack-staging.onrender.com
+              - key: NIMBUS_SLACK_STATE_SECRET
+                generateValue: true
+              - key: NIMBUS_SLACK_SECRET_KEY
+                sync: false
+              - key: NIMBUS_SLACK_STATE_DIR
+                value: /var/data/nimbus-slack
+              - key: NIMBUS_SLACK_SESSION_DIR
+                value: /var/data/nimbus-slack
+              - key: NIMBUS_SLACK_MODEL_MODE
+                value: tenant-local
+              - key: NIMBUS_SLACK_FILE_SCAN_PAGE_SIZE
+                value: "100"
+              - key: NIMBUS_SLACK_FILE_SCAN_MAX_PAGES
+                value: "3"
+              - key: NIMBUS_SLACK_MAX_FILE_BYTES
+                value: "26214400"
+              - key: SLACK_BOT_TOKEN
+                sync: false
+
+      - name: production
+        networking:
+          isolation: enabled
+        permissions:
+          protection: enabled
+        databases:
+          - name: nimbus-production-postgres
+            databaseName: nimbus_production
+            user: nimbus
+            region: virginia
+            plan: free
+            ipAllowList: []
+        services:
+          - type: web
+            name: nimbus-production
+            runtime: docker
+            branch: hw-3
+            region: virginia
+            plan: free
+            dockerfilePath: ./Dockerfile
+            dockerCommand: sh scripts/render/start.sh
+            autoDeploy: false
+            healthCheckPath: /ready
+            envVars:
+              - key: ENVIRONMENT
+                value: production
+              - key: PORT
+                value: "8080"
+              - key: NIMBUS_STATE_BACKEND
+                value: postgres
+              - key: DATABASE_URL
+                fromDatabase:
+                  name: nimbus-production-postgres
+                  property: connectionString
+              - key: SESSION_SECRET_KEY
+                generateValue: true
+              - key: API_KEY
+                generateValue: true
+              - key: AI_SERVER_API_KEY
+                generateValue: true
+              - key: AI_SERVER_SIGNING_SECRET
+                sync: false
+              - key: AWS_ACCESS_KEY_ID
+                sync: false
+              - key: AWS_SECRET_ACCESS_KEY
+                sync: false
+              - key: AWS_REGION
+                sync: false
+              - key: AWS_BUCKET_NAME
+                sync: false
+              - key: NIMBUS_CONTAINER
+                sync: false
+              - key: OPENROUTER_API_KEY
+                sync: false
+              - key: OPENROUTER_MODEL
+                sync: false
+              - key: OPENROUTER_FALLBACK_MODEL
+                sync: false
+              - key: NEW_RELIC_LICENSE_KEY
+                sync: false
+              - key: OTEL_EXPORTER_OTLP_ENDPOINT
+                sync: false
+              - key: SENTRY_DSN
+                sync: false
+              - key: LAUNCHDARKLY_SDK_KEY
+                sync: false
+
+          - type: web
+            name: nimbus-slack-production
+            runtime: docker
+            branch: hw-3
+            region: virginia
+            plan: starter
+            dockerfilePath: ./Dockerfile
+            dockerCommand: sh scripts/render/start-slack.sh
+            autoDeploy: false
+            healthCheckPath: /health
+            disk:
+              name: nimbus-slack-state
+              mountPath: /var/data/nimbus-slack
+              sizeGB: 1
+            envVars:
+              - key: ENVIRONMENT
+                value: production
+              - key: PORT
+                value: "8080"
+              - key: AI_SERVER_BASE_URL
+                value: https://nimbus-production.onrender.com
+              - key: AI_SERVER_SIGNING_SECRET
+                sync: false
+              - key: SLACK_SIGNING_SECRET
+                sync: false
+              - key: SLACK_CLIENT_ID
+                sync: false
+              - key: SLACK_CLIENT_SECRET
+                sync: false
+              - key: NIMBUS_SLACK_PUBLIC_BASE_URL
+                value: https://nimbus-slack-production.onrender.com
+              - key: NIMBUS_SLACK_STATE_SECRET
+                generateValue: true
+              - key: NIMBUS_SLACK_SECRET_KEY
+                sync: false
+              - key: NIMBUS_SLACK_STATE_DIR
+                value: /var/data/nimbus-slack
+              - key: NIMBUS_SLACK_SESSION_DIR
+                value: /var/data/nimbus-slack
+              - key: NIMBUS_SLACK_MODEL_MODE
+                value: tenant-local
+              - key: NIMBUS_SLACK_FILE_SCAN_PAGE_SIZE
+                value: "100"
+              - key: NIMBUS_SLACK_FILE_SCAN_MAX_PAGES
+                value: "3"
+              - key: NIMBUS_SLACK_MAX_FILE_BYTES
+                value: "26214400"
+              - key: SLACK_BOT_TOKEN
+                sync: false
