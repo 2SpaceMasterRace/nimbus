@@ -41,6 +41,7 @@ htmlcov/
 .ruff_cache/
 
 # IDE / editors
+.claude/
 .idea/
 .vscode/
 *.swp
@@ -76,3 +77,10 @@ Homework*.txt
 OSPSD Spring*.txt
 session-prompt.md
 plans.md
+
+# Course materials directory (local only)
+Homeworks/
+Books/
+
+# IaC state file — contains resource IDs; never commit
+infra/.infra_state.json

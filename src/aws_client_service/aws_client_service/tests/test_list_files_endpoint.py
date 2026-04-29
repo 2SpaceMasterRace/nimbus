@@ -2,38 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
-from aws_client_service.main import app, get_storage_client
 from cloud_storage_api import ObjectInfo, StorageBackendError
 from fastapi.testclient import TestClient
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 pytestmark = pytest.mark.unit
 
 HTTP_OK = 200
 HTTP_UNPROCESSABLE = 422
 HTTP_BAD_GATEWAY = 502
-
-
-@pytest.fixture
-def client() -> Iterator[TestClient]:
-    """Provide a TestClient and clean up dependency overrides after each test."""
-    test_client = TestClient(app)
-    yield test_client
-    app.dependency_overrides.clear()
-
-
-@pytest.fixture
-def mock_storage_client() -> MagicMock:
-    """Provide a mock CloudStorageClient wired into the FastAPI dependency system."""
-    mock_client = MagicMock()
-    app.dependency_overrides[get_storage_client] = lambda: mock_client
-    return mock_client
 
 
 def test_list_files_returns_matching_files(

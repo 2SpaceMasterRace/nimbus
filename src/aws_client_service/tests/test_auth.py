@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Annotated
+from pathlib import Path
+from typing import Annotated
 
+import pytest
+from aws_client_impl.oauth import OAuthProviderError, OAuthTransportError
 from aws_client_service.deps import require_oauth_session
 from aws_client_service.routes.auth import router as auth_router
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 from starlette.middleware.sessions import SessionMiddleware
 
-if TYPE_CHECKING:
-    import pytest
+pytestmark = pytest.mark.unit
 
 HTTP_OK = 200
 HTTP_FOUND = 302
 HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
+HTTP_BAD_GATEWAY = 502
+HTTP_GATEWAY_TIMEOUT = 504
+TEST_OAUTH_STATE = "test-state"
+TEST_AUTH_URL = f"https://github.com/login/oauth/authorize?state={TEST_OAUTH_STATE}"
+TEST_API_KEY = "test-api-key"
 
 
 def create_test_app() -> FastAPI:
@@ -37,41 +44,43 @@ def create_test_app() -> FastAPI:
     return app
 
 
-def test_auth_login_redirects(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that /auth/login redirects to GitHub and stores state."""
+@pytest.fixture
+def auth_client() -> TestClient:
+    """Return a fresh test client for the OAuth routes."""
+    return TestClient(create_test_app())
 
-    def mock_build_github_auth_url() -> tuple[str, str]:
-        return "https://github.com/login/oauth/authorize?state=test-state", "test-state"
 
+def _mock_build_github_auth_url() -> tuple[str, str]:
+    """Return a deterministic GitHub auth redirect target."""
+    return TEST_AUTH_URL, TEST_OAUTH_STATE
+
+
+def test_auth_login_redirects(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_client: TestClient,
+) -> None:
+    """Login starts the OAuth flow and redirects to GitHub."""
     monkeypatch.setattr(
         "aws_client_service.routes.auth.build_github_auth_url",
-        mock_build_github_auth_url,
+        _mock_build_github_auth_url,
     )
-
-    client = TestClient(create_test_app())
-    response = client.get("/auth/login", follow_redirects=False)
+    response = auth_client.get("/auth/login", follow_redirects=False)
 
     assert response.status_code == HTTP_FOUND
-    assert response.headers["location"] == (
-        "https://github.com/login/oauth/authorize?state=test-state"
-    )
+    assert response.headers["location"] == TEST_AUTH_URL
 
 
-def test_auth_callback_rejects_invalid_state(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test that /auth/callback rejects mismatched state."""
-
-    def mock_build_github_auth_url() -> tuple[str, str]:
-        return "https://github.com/login/oauth/authorize?state=test-state", "test-state"
-
+def test_auth_callback_rejects_invalid_state(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_client: TestClient,
+) -> None:
+    """Callback rejects mismatched OAuth state."""
     monkeypatch.setattr(
         "aws_client_service.routes.auth.build_github_auth_url",
-        mock_build_github_auth_url,
+        _mock_build_github_auth_url,
     )
-
-    client = TestClient(create_test_app())
-    client.get("/auth/login", follow_redirects=False)
-
-    response = client.get(
+    auth_client.get("/auth/login", follow_redirects=False)
+    response = auth_client.get(
         "/auth/callback",
         params={"code": "abc123", "state": "wrong-state"},
     )
@@ -82,11 +91,11 @@ def test_auth_callback_rejects_invalid_state(monkeypatch: pytest.MonkeyPatch) ->
 
 def test_auth_callback_stores_token_on_success(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    auth_client: TestClient,
 ) -> None:
-    """Test that /auth/callback succeeds when state matches."""
-
-    def mock_build_github_auth_url() -> tuple[str, str]:
-        return "https://github.com/login/oauth/authorize?state=test-state", "test-state"
+    """Callback stores the token server-side and authenticates later requests."""
+    monkeypatch.setenv("OAUTH_SESSION_STORE_DIR", str(tmp_path))
 
     def mock_exchange_code_for_token(code: str) -> str:
         assert code == "abc123"
@@ -94,62 +103,172 @@ def test_auth_callback_stores_token_on_success(
 
     monkeypatch.setattr(
         "aws_client_service.routes.auth.build_github_auth_url",
-        mock_build_github_auth_url,
+        _mock_build_github_auth_url,
     )
     monkeypatch.setattr(
         "aws_client_service.routes.auth.exchange_code_for_token",
         mock_exchange_code_for_token,
     )
-
-    client = TestClient(create_test_app())
-    client.get("/auth/login", follow_redirects=False)
-
-    response = client.get(
+    auth_client.get("/auth/login", follow_redirects=False)
+    response = auth_client.get(
         "/auth/callback",
-        params={"code": "abc123", "state": "test-state"},
+        params={"code": "abc123", "state": TEST_OAUTH_STATE},
     )
 
     assert response.status_code == HTTP_OK
     assert response.json()["message"] == "OAuth login successful"
 
-    protected_response = client.get("/protected")
+    protected_response = auth_client.get("/protected")
     assert protected_response.status_code == HTTP_OK
     assert protected_response.json() == {"ok": True}
+    assert "fake-token" not in (auth_client.cookies.get("session") or "")
+    stored_files = list(tmp_path.glob("*.json"))
+    assert len(stored_files) == 1
+    assert "fake-token" in stored_files[0].read_text(encoding="utf-8")
 
 
-def test_require_oauth_session_accepts_x_api_key(
+def test_auth_callback_clears_oauth_state_after_success(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    auth_client: TestClient,
 ) -> None:
-    """Test protected route accepts a configured X-API-Key header."""
-    monkeypatch.setenv("API_KEY", "test-api-key")
+    """Callback removes the one-time OAuth state after successful login."""
+    monkeypatch.setenv("OAUTH_SESSION_STORE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.build_github_auth_url",
+        _mock_build_github_auth_url,
+    )
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.exchange_code_for_token",
+        lambda _code: "fake-token",
+    )
 
-    client = TestClient(create_test_app())
-    response = client.get("/protected", headers={"X-API-Key": "test-api-key"})
-
-    assert response.status_code == HTTP_OK
-    assert response.json() == {"ok": True}
-
-
-def test_require_oauth_session_accepts_bearer_api_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Test protected route accepts a configured bearer API key."""
-    monkeypatch.setenv("API_KEY", "test-api-key")
-
-    client = TestClient(create_test_app())
-    response = client.get(
-        "/protected",
-        headers={"Authorization": "Bearer test-api-key"},
+    auth_client.get("/auth/login", follow_redirects=False)
+    response = auth_client.get(
+        "/auth/callback",
+        params={"code": "abc123", "state": TEST_OAUTH_STATE},
     )
 
     assert response.status_code == HTTP_OK
-    assert response.json() == {"ok": True}
+    follow_up = auth_client.get(
+        "/auth/callback",
+        params={"code": "abc123", "state": TEST_OAUTH_STATE},
+    )
+    assert follow_up.status_code == HTTP_BAD_REQUEST
+    assert follow_up.json()["detail"] == "Invalid OAuth state"
 
 
-def test_require_oauth_session_rejects_missing_token() -> None:
-    """Test protected route rejects requests without OAuth session."""
-    client = TestClient(create_test_app())
-    response = client.get("/protected")
+def test_auth_callback_maps_value_error_to_400(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_client: TestClient,
+) -> None:
+    """User-facing OAuth callback errors return 400 with the original detail."""
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.build_github_auth_url",
+        _mock_build_github_auth_url,
+    )
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.exchange_code_for_token",
+        lambda _code: (_ for _ in ()).throw(ValueError("expired code")),
+    )
+    auth_client.get("/auth/login", follow_redirects=False)
+
+    response = auth_client.get(
+        "/auth/callback",
+        params={"code": "abc123", "state": TEST_OAUTH_STATE},
+    )
+
+    assert response.status_code == HTTP_BAD_REQUEST
+    assert response.json() == {"detail": "expired code"}
+
+
+def test_auth_callback_maps_transport_timeout_to_504(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_client: TestClient,
+) -> None:
+    """Timeouts talking to GitHub become 504 responses."""
+
+    def mock_exchange_code_for_token(_code: str) -> str:
+        msg = "GitHub OAuth token exchange timed out"
+        raise OAuthTransportError(msg)
+
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.build_github_auth_url",
+        _mock_build_github_auth_url,
+    )
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.exchange_code_for_token",
+        mock_exchange_code_for_token,
+    )
+    auth_client.get("/auth/login", follow_redirects=False)
+    response = auth_client.get(
+        "/auth/callback",
+        params={"code": "abc123", "state": TEST_OAUTH_STATE},
+    )
+
+    assert response.status_code == HTTP_GATEWAY_TIMEOUT
+
+
+def test_auth_callback_maps_provider_failure_to_502(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_client: TestClient,
+) -> None:
+    """Provider-side OAuth failures become 502 responses."""
+
+    def mock_exchange_code_for_token(_code: str) -> str:
+        msg = "GitHub OAuth token exchange returned invalid JSON"
+        raise OAuthProviderError(msg)
+
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.build_github_auth_url",
+        _mock_build_github_auth_url,
+    )
+    monkeypatch.setattr(
+        "aws_client_service.routes.auth.exchange_code_for_token",
+        mock_exchange_code_for_token,
+    )
+    auth_client.get("/auth/login", follow_redirects=False)
+    response = auth_client.get(
+        "/auth/callback",
+        params={"code": "abc123", "state": TEST_OAUTH_STATE},
+    )
+
+    assert response.status_code == HTTP_BAD_GATEWAY
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_status"),
+    [
+        ({"X-API-Key": TEST_API_KEY}, HTTP_OK),
+        ({"Authorization": f"Bearer {TEST_API_KEY}"}, HTTP_OK),
+        ({"Authorization": "Bearer"}, HTTP_UNAUTHORIZED),
+        ({"Authorization": "Basic test-api-key"}, HTTP_UNAUTHORIZED),
+        ({"Authorization": "Bearer wrong-key"}, HTTP_UNAUTHORIZED),
+        ({"X-API-Key": "wrong-key"}, HTTP_UNAUTHORIZED),
+    ],
+)
+def test_require_oauth_session_authenticates_only_expected_api_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    auth_client: TestClient,
+    headers: dict[str, str],
+    expected_status: int,
+) -> None:
+    """Protected routes accept only the configured API key formats."""
+    monkeypatch.setenv("API_KEY", TEST_API_KEY)
+    response = auth_client.get("/protected", headers=headers)
+
+    assert response.status_code == expected_status
+    if expected_status == HTTP_OK:
+        assert response.json() == {"ok": True}
+    else:
+        assert response.json() == {"detail": "Authentication required"}
+
+
+def test_require_oauth_session_rejects_missing_token(
+    auth_client: TestClient,
+) -> None:
+    """Protected routes reject requests without an OAuth session or API key."""
+    response = auth_client.get("/protected")
 
     assert response.status_code == HTTP_UNAUTHORIZED
     assert response.json()["detail"] == "Authentication required"
