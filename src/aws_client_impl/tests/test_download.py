@@ -10,6 +10,8 @@ from cloud_storage_api import ObjectInfo, ObjectNotFoundError
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
+pytestmark = pytest.mark.unit
+
 
 def _client_error(op: str = "DownloadFile") -> ClientError:
     """Create a mock ClientError for testing."""

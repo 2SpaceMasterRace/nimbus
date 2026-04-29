@@ -2,10 +2,13 @@
 
 from typing import TYPE_CHECKING
 
+import pytest
 from aws_client_impl.s3_client import S3Client
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
+
+pytestmark = pytest.mark.unit
 
 
 def test_get_session_uses_aws_region_env_var(mocker: "MockerFixture") -> None:

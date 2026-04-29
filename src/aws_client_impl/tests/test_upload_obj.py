@@ -11,6 +11,8 @@ from cloud_storage_api import ObjectInfo, StorageBackendError
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
+pytestmark = pytest.mark.unit
+
 
 def _client_error() -> ClientError:
     """Create a mock ClientError for testing."""
@@ -86,7 +88,8 @@ def test_upload_obj_calls_multipart_when_unseekable(
         def readable(self) -> bool:
             return True
 
-        def read(self, n: int = -1) -> bytes:  # noqa: ARG002  # n is required by BinaryIO.read() protocol but intentionally unused in this stub
+        # n is part of the BinaryIO.read() signature; unused in this stub.
+        def read(self, n: int = -1) -> bytes:
             return b""  # no content needed for this unit test
 
         def seekable(self) -> bool:

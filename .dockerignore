@@ -2,6 +2,9 @@
 .github
 .circleci
 .venv
+.coverage
+.DS_Store
+.hypothesis
 __pycache__
 *.pyc
 *.pyo
@@ -9,6 +12,8 @@ __pycache__
 .pytest_cache
 .mypy_cache
 .ruff_cache
+books
+Homeworks
 coverage
 dist
 build

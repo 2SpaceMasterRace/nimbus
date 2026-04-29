@@ -11,6 +11,19 @@ authors = [
     { name = "Nicholas Maspons", email = "nem8891@nyu.edu" },
 ]
 requires-python = ">=3.12"
+dependencies = [
+    "cloud-storage-api>=1.0.0",
+    "fastapi>=0.135.2",
+    "itsdangerous>=2.2.0",
+    "openai>=2.32.0",
+    "pydantic-ai>=1.84.1",
+    "python-dotenv>=1.2.2",
+    "sentry-sdk>=2.58.0",
+    "structlog>=25.5.0",
+    "uvicorn>=0.42.0",
+    "chat-client-api",
+    "slack-client-impl",
+]
 
 [tool.uv]
 package = false
@@ -18,6 +31,7 @@ package = false
 [tool.ruff]
 extend-exclude = [
     "src/aws_s3_cloud_storage_service_client/aws_s3_cloud_storage_service_client",
+    "fuzz",
 ]
 
 [tool.uv.workspace]
@@ -25,7 +39,12 @@ members = [
     "src/aws_client_impl",
     "src/aws_client_service",
     "src/aws_client_adapter",
-    "src/aws_s3_cloud_storage_service_client"
+    "src/aws_s3_cloud_storage_service_client",
+    "src/ai_client_api",
+    "src/openrouter_ai_client_impl",
+    "src/ai_server",
+    "src/nimbus_runtime",
+    "src/slack_bridge",
 ]
 
 [tool.uv.sources]
@@ -33,14 +52,21 @@ aws-client-impl = { workspace = true }
 aws-client-service = { workspace = true }
 aws-client-adapter = { workspace = true }
 aws-s3-cloud-storage-service-client = { workspace = true }
+ai-server = { workspace = true }
+nimbus-runtime = { workspace = true }
+slack-bridge = { workspace = true }
+chat-client-api = { git = "https://github.com/HarshithKoriRaj/Shared-API.git" }
+slack-client-impl = { git = "https://github.com/at5722/OS", subdirectory = "components/slack_client_impl", rev = "HW3" }
 
 [dependency-groups]
 dev = [
     "boto3-stubs>=1.42.54",
     "coverage>=7.13.4",
+    "httpx>=0.27.0",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
     "pytest-cov>=6.0.0",
+    "pytest-bdd>=8.1.0",
     "pytest-mock>=3.14.0",
     "ruff>=0.15.0",
     "furo>=2025.12.19",
@@ -50,6 +76,7 @@ dev = [
     "pytest-httpserver>=1.1.5",
     "types-python-dateutil>=2.9.0.20250516",
     "types-requests>=2.33.0.20260327",
+    "hypothesis>=6.152.3",
 ]
 
 [tool.ruff.lint]
@@ -63,15 +90,64 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"**/test_*.py" = ["S101", "S105"]
+# Test modules: assertions are the point (S101); stub classes/methods don't
+# need docstrings (D101/D102/D107); magic numbers in assertions are fine
+# (PLR2004); secret-like strings in sample data are not real creds (S105);
+# PT022 triggers on fixtures that yield a value for clarity even without
+# teardown, which is a style choice not a bug.
+# TC002: test imports (pytest, fastapi) are used at runtime, not just for
+# type-checking. PT011/PT018: broad raises and compound assertions are common
+# test idioms. ARG002: pytest fixtures are injected even when only needed for
+# side-effects (e.g. monkeypatching env vars).
+"**/test_*.py" = ["S101", "S105", "PLR2004", "D101", "D102", "D107", "PT022", "TC002", "TC003", "PT011", "PT018", "ARG002", "PLC0415"]
+# conftest.py: fixtures use Any for pytest-injected types (tmp_path, monkeypatch
+# variants); D103/D107 docstrings on fixtures are optional; TC002/TC003 same as tests.
+"**/conftest.py" = ["D102", "D103", "D107", "ANN401", "TC002", "TC003", "ARG002"]
+# CLI scripts intentionally use print for human output; TRY003/EM10* would
+# force every ValueError site to define a helper constant which hurts
+# readability more than it helps. PLR0913 would force kwargs-dict plumbing
+# through the constructor.
+"**/cli.py" = ["T201", "TRY003", "EM101", "EM102", "PLR0913", "PLR0912", "C901", "PLC0415"]
+# Benchmark/smoke scripts are CLI tools: print is the output mechanism,
+# magic constants are meaningful benchmark thresholds, complex scoring
+# functions resist decomposition, and backslash continuation in run-with
+# examples is idiomatic reStructuredText.
+"**/scripts/*.py" = [
+    "T201", "PLR2004", "PLR0911", "PLR0912", "C901",
+    "D101", "D102", "D103", "D107",
+    "TRY300", "S110", "FURB171",
+    "RUF001", "E501", "D301",
+]
 
 [tool.mypy]
 strict = true
 ignore_missing_imports = true
+# Test directories across multiple packages share names (e.g. "tests",
+# "test_auth") which causes mypy module-collision errors when the whole
+# tree is checked at once.  pytest uses --import-mode=importlib so no
+# __init__.py is needed; exclude these directories from mypy and rely on
+# pytest + ruff for correctness checks on test code.
+#
+# `fuzz/` is excluded for the same reason as `tests/`: harnesses are not
+# production code, they import an optional dependency (atheris) whose stub
+# availability varies per environment, and ruff already excludes them via
+# `extend-exclude`.  Keeping mypy strict on fuzz harnesses forced fragile
+# `# type: ignore[import, unused-ignore]` chains; excluding is cleaner.
+exclude = [
+    "src/.*/tests/",
+    "tests/",
+    "fuzz/",
+]
 mypy_path = [
     "src/aws_client_impl",
     "src/aws_client_service",
     "src/aws_client_adapter",
+    "src/aws_s3_cloud_storage_service_client",
+    "src/ai_server",
+    "src/nimbus_runtime",
+    "src/ai_client_api",
+    "src/openrouter_ai_client_impl",
+    "src/slack_bridge",
 ]
 
 [[tool.mypy.overrides]]
@@ -85,6 +161,13 @@ ignore_missing_imports = true
 module = ["tests.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["aws_s3_cloud_storage_service_client.*"]
+# Generated client code is kept in the repo as a build artifact and runtime
+# dependency, but it is not hand-authored domain logic. Keep it visible to mypy
+# via mypy_path, while explicitly opting it out of strict checking.
+ignore_errors = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests", "src/*/tests"]
 addopts = ["--cov", "--cov-report=term-missing", "--import-mode=importlib"]
@@ -94,11 +177,13 @@ markers = [
     "regression: marks tests that verify previously fixed bugs have not re-emerged or core functionality hasn't degraded",
     "property: marks property-based tests (using Hypothesis) that generate a wide range of inputs to verify invariant behaviors",
     "e2e: marks tests as end-to-end tests (slow, full system)",
+    "bdd: marks behavior-driven acceptance tests written in Gherkin",
     "circleci: marks tests that can run in CI/CD environments without local credentials",
     "local_credentials: marks tests that require local credentials.json or token.json files",
 ]
 
 [tool.coverage.run]
+branch = true
 source = ["src"]
 omit = [
     "*/tests/*",
