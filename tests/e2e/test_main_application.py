@@ -1,8 +1,4 @@
-"""End-to-End tests for the main application.
-
-This module tests the application's main entry point (main.py) as a black box,
-simulating real user interactions and verifying the complete workflow.
-"""
+"""End-to-end tests for the main application entry point."""
 
 import os
 import subprocess
@@ -14,43 +10,77 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 _WORKSPACE_ROOT = Path(__file__).parent.parent.parent
+FAKE_BUCKET = "demo-bucket"
 
 
-def _subprocess_env() -> dict[str, str]:
+def _subprocess_env(*, extra_pythonpath: list[str] | None = None) -> dict[str, str]:
     """Build environment dict with PYTHONPATH matching pytest's pythonpath config."""
     env = os.environ.copy()
     root = str(_WORKSPACE_ROOT)
     src = str(_WORKSPACE_ROOT / "src")
-    env["PYTHONPATH"] = os.pathsep.join([root, src, env.get("PYTHONPATH", "")])
+    pythonpath_entries = [root, src]
+    if extra_pythonpath:
+        pythonpath_entries = [*extra_pythonpath, *pythonpath_entries]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     return env
 
 
-@pytest.mark.circleci
-def test_main_script_runs_successfully() -> None:
-    """Tests that main.py executes the full S3 workflow end-to-end.
+def _main_script() -> Path:
+    """Return the path to the main entry-point script."""
+    return _WORKSPACE_ROOT / "main.py"
 
-    Requires AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and
-    AWS_BUCKET_NAME to be set. Verifies the entire flow: client creation
-    via dependency injection, S3 API call, and response handling.
-    """
-    main_script = _WORKSPACE_ROOT / "main.py"
+
+def _write_fake_aws_client_impl(root: Path) -> None:
+    """Write a deterministic fake ``aws_client_impl`` package for subprocess tests."""
+    package_dir = root / "aws_client_impl"
+    package_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / "__init__.py").write_text(
+        "from .s3_client import get_client_impl\n",
+        encoding="utf-8",
+    )
+    (package_dir / "s3_client.py").write_text(
+        """
+from __future__ import annotations
+
+from cloud_storage_api import ObjectInfo, StorageBackendError
+
+
+class _FakeClient:
+    def list_files(self, container: str, prefix: str) -> list[ObjectInfo]:
+        if container == "explode-bucket":
+            raise StorageBackendError("simulated storage failure")
+        return [
+            ObjectInfo(object_name="reports/alpha.txt", size_bytes=13),
+            ObjectInfo(object_name="reports/beta.txt", size_bytes=12),
+        ]
+
+
+def get_client_impl():
+    return _FakeClient()
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.circleci
+def test_main_script_runs_successfully_with_deterministic_fake_backend(
+    tmp_path: Path,
+) -> None:
+    """main.py completes its workflow against a reproducible fake backend."""
+    main_script = _main_script()
 
     if not main_script.exists():
         pytest.skip(f"main.py not found at {main_script}")
 
-    required_env_vars = [
-        "AWS_REGION",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_BUCKET_NAME",
-    ]
-    missing_vars = [var for var in required_env_vars if not os.environ.get(var)]
+    fake_pkg_root = tmp_path / "fake_packages"
+    _write_fake_aws_client_impl(fake_pkg_root)
 
-    if missing_vars:
-        pytest.skip(
-            f"Missing required environment variables: {missing_vars}",
-        )
-
+    env = _subprocess_env(extra_pythonpath=[str(fake_pkg_root)])
+    env["AWS_BUCKET_NAME"] = FAKE_BUCKET
     command = [sys.executable, str(main_script)]
 
     try:
@@ -61,13 +91,15 @@ def test_main_script_runs_successfully() -> None:
             check=True,
             timeout=60,
             cwd=str(main_script.parent),
-            env=_subprocess_env(),
+            env=env,
         )
 
-        output = result.stdout
-        assert "Created cloud storage client" in output
-        assert "Listed files in bucket" in output
-        assert "Demo complete" in output
+        combined_output = f"{result.stdout}\n{result.stderr}"
+        assert "Created cloud storage client" in combined_output
+        assert "Listed files in bucket" in combined_output
+        assert "reports/alpha.txt" in combined_output
+        assert "reports/beta.txt" in combined_output
+        assert "Demo complete" in combined_output
 
     except subprocess.TimeoutExpired:
         pytest.fail("E2E test timed out - main.py took too long to execute")
@@ -80,13 +112,8 @@ def test_main_script_runs_successfully() -> None:
 
 @pytest.mark.circleci
 def test_main_script_handles_no_credentials_gracefully() -> None:
-    """Ensure main.py fails with a clear error when AWS_BUCKET_NAME is missing.
-
-    Runs main.py as a subprocess with AWS_BUCKET_NAME stripped from the
-    environment and verifies a non-zero exit code with a meaningful
-    traceback in stderr.
-    """
-    main_script = _WORKSPACE_ROOT / "main.py"
+    """main.py fails deterministically when ``AWS_BUCKET_NAME`` is missing."""
+    main_script = _main_script()
 
     if not main_script.exists():
         pytest.skip(f"main.py not found at {main_script}")
@@ -107,7 +134,38 @@ def test_main_script_handles_no_credentials_gracefully() -> None:
     )
 
     assert result.returncode != 0
-    assert result.stderr  # some error must appear in stderr
+    assert "AWS_BUCKET_NAME" in result.stderr
+
+
+@pytest.mark.circleci
+def test_main_script_propagates_backend_failure(
+    tmp_path: Path,
+) -> None:
+    """main.py surfaces deterministic storage failures from the backend."""
+    main_script = _main_script()
+
+    if not main_script.exists():
+        pytest.skip(f"main.py not found at {main_script}")
+
+    fake_pkg_root = tmp_path / "fake_packages"
+    _write_fake_aws_client_impl(fake_pkg_root)
+
+    env = _subprocess_env(extra_pythonpath=[str(fake_pkg_root)])
+    env["AWS_BUCKET_NAME"] = "explode-bucket"
+    command = [sys.executable, str(main_script)]
+
+    result = subprocess.run(  # noqa: S603  # trusted command list
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+        cwd=str(main_script.parent),
+        env=env,
+    )
+
+    assert result.returncode != 0
+    assert "simulated storage failure" in result.stderr
 
 
 @pytest.mark.circleci
@@ -116,7 +174,7 @@ def test_main_script_syntax_is_valid() -> None:
 
     This can run in any environment.
     """
-    main_script = _WORKSPACE_ROOT / "main.py"
+    main_script = _main_script()
 
     if not main_script.exists():
         pytest.skip(f"main.py not found at {main_script}")
@@ -141,7 +199,7 @@ def test_main_script_imports_work() -> None:
 
     This can run in any environment.
     """
-    main_script = _WORKSPACE_ROOT / "main.py"
+    main_script = _main_script()
 
     if not main_script.exists():
         pytest.skip(f"main.py not found at {main_script}")
