@@ -286,12 +286,27 @@ class NimbusRuntime:
     ) -> AIResponse:
         """Run one legacy text chat interaction against the persisted session."""
         del user_id
+        started = time.monotonic()
         async with get_session_lock(session_id):
-            return await self._run_ai_interaction(
-                message=message,
-                session_id=session_id,
-                tools=tools,
-            )
+            try:
+                ai_response = await self._run_ai_interaction(
+                    message=message,
+                    session_id=session_id,
+                    tools=tools,
+                )
+            except Exception:
+                self._telemetry.record_wrapper_turn(
+                    platform="api",
+                    outcome="error",
+                    latency_ms=int((time.monotonic() - started) * 1000),
+                )
+                raise
+        self._telemetry.record_wrapper_turn(
+            platform="api",
+            outcome="reply",
+            latency_ms=int((time.monotonic() - started) * 1000),
+        )
+        return ai_response
 
     async def run_chat_turn(self, turn: ChatTurnInput) -> ChatTurnResult:
         """Run one wrapper-facing turn through the shared Nimbus runtime."""
