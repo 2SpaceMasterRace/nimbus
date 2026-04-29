@@ -9,7 +9,6 @@ from datetime import (
 )
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
-
 import structlog
 from ai_server.router import router as ai_router
 from cloud_storage_api import (
@@ -24,6 +23,7 @@ from cloud_storage_api import (
 )
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
+import sentry_sdk
 from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -36,12 +36,19 @@ from aws_client_service.routes.auth import router as auth_router
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
 
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    traces_sample_rate=1.0,
+    environment=os.getenv("ENVIRONMENT", "development"),
+)
+
 from aws_client_impl.s3_client import get_client_impl  # noqa: E402, I001  # env must be loaded before constructing the client
 
 log: Any = structlog.get_logger()
 
 app = FastAPI(title="AWS S3 Cloud Storage Service", version="0.1.0")
-SPHINX_HTML_DIR = Path(__file__).resolve().parents[3] / "docs" / "build" / "html"
+SPHINX_HTML_DIR = Path(__file__).resolve(
+).parents[3] / "docs" / "build" / "html"
 
 app.add_middleware(
     SessionMiddleware,
@@ -110,6 +117,11 @@ def remove_temp_file(path: str) -> None:
 async def health() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/sentry-debug")
+async def trigger_error() -> None:
+    division_by_zero = 1 / 0
 
 
 @app.get("/")

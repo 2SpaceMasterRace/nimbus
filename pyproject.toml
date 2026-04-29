@@ -11,6 +11,17 @@ authors = [
     { name = "Nicholas Maspons", email = "nem8891@nyu.edu" },
 ]
 requires-python = ">=3.12"
+dependencies = [
+    "cloud-storage-api>=1.0.0",
+    "fastapi>=0.135.2",
+    "itsdangerous>=2.2.0",
+    "openai>=2.32.0",
+    "pydantic-ai>=1.84.1",
+    "python-dotenv>=1.2.2",
+    "sentry-sdk>=2.58.0",
+    "structlog>=25.5.0",
+    "uvicorn>=0.42.0",
+]
 
 [tool.uv]
 package = false
