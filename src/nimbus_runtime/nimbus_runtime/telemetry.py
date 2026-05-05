@@ -131,9 +131,7 @@ class RuntimeTelemetry:
             float(latency_ms),
             platform=platform,
         )
-        self.turn_counter.add(
-            1, attributes={"platform": platform, "outcome": outcome}
-        )
+        self.turn_counter.add(1, attributes={"platform": platform, "outcome": outcome})
         self.turn_histogram.record(float(latency_ms), attributes={"platform": platform})
 
     def record_idempotent_replay(self, *, backend: str) -> None:

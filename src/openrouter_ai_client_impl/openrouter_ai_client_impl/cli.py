@@ -592,9 +592,10 @@ def _build_tools_or_empty(container: str | None, safe_root: Path) -> list[Tool]:
         )
         return []
     try:
-        from aws_client_impl import (
+        from aws_client_impl.s3_client import (
             get_client_impl as get_s3_client,
         )
+
         from openrouter_ai_client_impl.cloud_storage_tools import (
             build_cloud_storage_tools,
         )

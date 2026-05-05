@@ -47,7 +47,7 @@ export API_KEY="dev-storage-api-key"
 ```
 
 ```python
-from aws_client_adapter import get_client_impl
+from aws_client_adapter.service_adapter import get_client_impl
 
 client = get_client_impl()
 items = client.list_files("my-bucket", "reports/")

@@ -21,7 +21,8 @@ log = structlog.get_logger()
 def _hmac_secret() -> str:
     return os.environ.get("SLACK_SIGNING_SECRET", "").strip()
 
-def verify_slack_secret (
+
+def verify_slack_secret(
     *,
     body: bytes,
     timestamp: str,
@@ -58,7 +59,7 @@ def verify_slack_secret (
         )
         return False
     now = int(time.time())
-    if abs(now-timestamp_int) > _SIGNED_REQUEST_MAX_AGE_SECONDS:
+    if abs(now - timestamp_int) > _SIGNED_REQUEST_MAX_AGE_SECONDS:
         log.warning("signed_request_stale_timestamp")
         runtime_telemetry.record_auth_result(
             mechanism="signed_request",
@@ -67,10 +68,12 @@ def verify_slack_secret (
         )
         return False
     canonical = f"v0:{timestamp}:{body.decode('utf-8')}"
-    expected = "v0=" + hmac.new(
-                            secret.encode("utf-8"),
-                            canonical.encode("utf-8"),
-                            hashlib.sha256).hexdigest()
+    expected = (
+        "v0="
+        + hmac.new(
+            secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+    )
     if not hmac.compare_digest(slack_signature, expected):
         log.warning("signed_request_invalid_signature")
         runtime_telemetry.record_auth_result(
