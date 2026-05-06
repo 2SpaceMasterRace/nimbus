@@ -62,7 +62,7 @@ All inherit from `AIClientError`:
 Frozen slots dataclass. Construct via `from_env()`:
 
 ```python
-from openrouter_ai_client_impl import OpenRouterConfig
+from openrouter_ai_client_impl.config import OpenRouterConfig
 
 config = OpenRouterConfig.from_env()  # reads OPENROUTER_API_KEY, etc.
 ```
@@ -95,7 +95,7 @@ lets the client construct the real `openai.OpenAI` instance from
 ### `get_client_impl`
 
 ```python
-from openrouter_ai_client_impl import get_client_impl
+from openrouter_ai_client_impl.openrouter_client import get_client_impl
 
 client = get_client_impl()  # reads env, builds an OpenRouterClient
 ```

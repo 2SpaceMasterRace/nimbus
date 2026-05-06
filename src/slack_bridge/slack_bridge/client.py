@@ -21,6 +21,7 @@ from nimbus_runtime.models import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
     from slack_bridge.models import NimbusTurnRequest
 
 log = structlog.get_logger()

@@ -82,7 +82,8 @@ directory or a parent directory. Exported shell variables take precedence.
 
 ```python
 from ai_client_api import Conversation
-from openrouter_ai_client_impl import OpenRouterClient, OpenRouterConfig
+from openrouter_ai_client_impl.config import OpenRouterConfig
+from openrouter_ai_client_impl.openrouter_client import OpenRouterClient
 
 client = OpenRouterClient(OpenRouterConfig.from_env())
 
@@ -100,7 +101,7 @@ print(response.model, response.tokens.total)
 ```python
 from pathlib import Path
 
-from aws_client_impl import get_client_impl
+from aws_client_impl.s3_client import get_client_impl
 from openrouter_ai_client_impl.cloud_storage_tools import build_cloud_storage_tools
 
 storage = get_client_impl()
