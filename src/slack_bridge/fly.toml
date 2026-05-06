@@ -1,0 +1,63 @@
+# Fly.io configuration for the Nimbus Slack Bridge.
+#
+# This is a separate Fly app from the AI server. The bridge is the
+# Slack-facing middleman: it terminates Slack Events API webhooks,
+# verifies signatures, normalizes events, and forwards signed turns to
+# the AI server. The AI server lives in its own Fly app
+# (see the repository-root fly.toml).
+#
+# Required Fly secrets (set with `flyctl secrets set ... --app
+# ospsd-team-2-bridge`):
+#
+#   SLACK_SIGNING_SECRET
+#       Slack app signing secret. Used to verify inbound webhook
+#       signatures. Without it the bridge fails closed and rejects every
+#       request with HTTP 401.
+#   AI_SERVER_BASE_URL
+#       Base URL of the AI server (e.g. https://ospsd-team-2.fly.dev).
+#       The bridge appends `/ai/chat/turn` and POSTs signed turns there.
+#   AI_SERVER_SIGNING_SECRET
+#       Shared HMAC secret used by the bridge to sign outbound turns and
+#       by the AI server to verify them. Must match exactly.
+#   SLACK_BOT_TOKEN
+#       OAuth bot token used by `slack_client_impl` to post replies back
+#       to Slack via `ChatClient.send_message`.
+
+app = "ospsd-team-2-bridge"
+primary_region = "ewr"
+
+[build]
+  dockerfile = "Dockerfile"
+  # The build context must include the entire workspace because the
+  # bridge depends on `nimbus_runtime` via a workspace path.
+  build-target = ""
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+
+[env]
+  PORT = "8080"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  # The bridge's idempotency dedupe cache lives in process memory.
+  # Keep exactly one machine until that cache is moved to a shared
+  # backend (Redis or similar); otherwise Slack retries can duplicate
+  # work and replies across machines.
+  min_machines_running = 1
+  processes = ["app"]
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
+  [http_service.checks.headers]
+    X-Forwarded-Proto = "https"

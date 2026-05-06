@@ -21,6 +21,7 @@ from nimbus_runtime.models import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
     from slack_bridge.models import NimbusTurnRequest
 
 log = structlog.get_logger()
@@ -32,6 +33,11 @@ _ALLOWED_OUTCOMES: Final[set[str]] = {
     "partial_success",
     "error",
 }
+_MAX_ATTEMPTS: Final[int] = 3
+# Backoff schedule between attempts. Length must be at least _MAX_ATTEMPTS - 1.
+_RETRY_BACKOFF_SECONDS: Final[tuple[float, ...]] = (0.5, 1.0)
+_HTTP_SERVER_ERROR_MIN: Final[int] = 500
+_HTTP_SERVER_ERROR_MAX_EXCLUSIVE: Final[int] = 600
 
 
 def encode_body(turn: NimbusTurnRequest) -> bytes:
@@ -157,31 +163,105 @@ def _parse_result(payload: object) -> ChatTurnResult:
     )
 
 
+def _is_retryable_status(exc: httpx.HTTPStatusError) -> bool:
+    """Return ``True`` for HTTP statuses worth retrying.
+
+    Only transient server-side failures qualify. ``4xx`` responses encode
+    semantic problems (auth, bad request, idempotency conflict) where a
+    retry cannot succeed and would just amplify the original failure.
+    """
+    return (
+        _HTTP_SERVER_ERROR_MIN
+        <= exc.response.status_code
+        < _HTTP_SERVER_ERROR_MAX_EXCLUSIVE
+    )
+
+
 def call_nimbus(turn: NimbusTurnRequest) -> ChatTurnResult:
-    """Sign and POST one wrapper-facing chat turn to Nimbus."""
+    """Sign and POST one wrapper-facing chat turn to Nimbus.
+
+    Transient failures (transport errors and ``5xx`` responses) are
+    retried with exponential backoff up to ``_MAX_ATTEMPTS`` total
+    attempts. The body is byte-stable across attempts and carries the
+    same ``idempotency_key``, so the AI server can de-duplicate retried
+    work by replaying the cached response. Non-transient errors (``4xx``,
+    response parse failures, unknown outcomes) are not retried because
+    they cannot succeed on a second attempt.
+    """
     base_url = os.environ.get("AI_SERVER_BASE_URL", "").strip().rstrip("/")
     if not base_url:
         msg = "AI_SERVER_BASE_URL is not set"
         raise RuntimeError(msg)
     body_bytes = encode_body(turn)
-    headers = sign_request(body_bytes)
     log.info(
-        "nimbus_request_sent",
+        "nimbus_request_sending",
         request_id=turn.request_id,
         idempotency_key=turn.idempotency_key,
     )
-    response = httpx.post(
-        f"{base_url}{_NIMBUS_PATH}",
-        content=body_bytes,
-        headers=headers,
-        timeout=_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
-    result = _parse_result(response.json())
-    log.info(
-        "nimbus_response_received",
-        request_id=result.request_id,
-        conversation_id=result.conversation_id,
-        outcome=result.outcome,
-    )
-    return result
+    last_transport_error: httpx.TransportError | None = None
+    last_status_error: httpx.HTTPStatusError | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        headers = sign_request(body_bytes)
+        try:
+            response = httpx.post(
+                f"{base_url}{_NIMBUS_PATH}",
+                content=body_bytes,
+                headers=headers,
+                timeout=_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+        except httpx.TransportError as exc:
+            last_transport_error = exc
+            if attempt < _MAX_ATTEMPTS - 1:
+                log.warning(
+                    "nimbus_request_retrying",
+                    reason="transport_error",
+                    attempt=attempt + 1,
+                    max_attempts=_MAX_ATTEMPTS,
+                    error=str(exc),
+                )
+                time.sleep(_RETRY_BACKOFF_SECONDS[attempt])
+                continue
+            log.exception(
+                "nimbus_request_failed",
+                reason="transport_error",
+                attempts=attempt + 1,
+            )
+            raise
+        except httpx.HTTPStatusError as exc:
+            last_status_error = exc
+            if _is_retryable_status(exc) and attempt < _MAX_ATTEMPTS - 1:
+                log.warning(
+                    "nimbus_request_retrying",
+                    reason="http_status",
+                    attempt=attempt + 1,
+                    max_attempts=_MAX_ATTEMPTS,
+                    status=exc.response.status_code,
+                )
+                time.sleep(_RETRY_BACKOFF_SECONDS[attempt])
+                continue
+            log.exception(
+                "nimbus_request_failed",
+                reason="http_status",
+                attempts=attempt + 1,
+                status=exc.response.status_code,
+            )
+            raise
+        result = _parse_result(response.json())
+        log.info(
+            "nimbus_response_received",
+            request_id=result.request_id,
+            conversation_id=result.conversation_id,
+            outcome=result.outcome,
+            attempts=attempt + 1,
+        )
+        return result
+    # Defensive: the loop above always either returns, sleeps and continues,
+    # or raises. Reaching here means the retry schedule did not raise but
+    # also did not succeed, which would be a programming error.
+    if last_status_error is not None:
+        raise last_status_error
+    if last_transport_error is not None:
+        raise last_transport_error
+    msg = "call_nimbus exhausted retries without observing a result"
+    raise RuntimeError(msg)

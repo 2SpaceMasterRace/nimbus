@@ -4,9 +4,18 @@ from __future__ import annotations
 
 import pytest
 
+from nimbus_runtime import runtime_telemetry
+
+
+@pytest.fixture(autouse=True)
+def _reset_runtime_telemetry() -> None:
+    """Clear the in-memory telemetry registry before every bridge test."""
+    runtime_telemetry.reset()
+
+
 @pytest.fixture
 def sample_event() -> dict[str, object]:
-    """A minimal Slack message event dict."""
+    """Return a minimal Slack message event dict."""
     return {
         "type": "message",
         "user": "U676767",
@@ -19,7 +28,7 @@ def sample_event() -> dict[str, object]:
 
 @pytest.fixture
 def mention_event() -> dict[str, object]:
-    """A Slack app-mention event dict."""
+    """Return a Slack app-mention event dict."""
     return {
         "type": "app_mention",
         "user": "U676767",
