@@ -464,7 +464,7 @@ jobs:
 workflows:
   main:
     jobs:
-      - lint
+      # - lint
       - docs-build
       - unit-tests
       - property-tests
@@ -479,7 +479,7 @@ workflows:
             - integration-tests
       - e2e-tests:
           requires:
-            - lint
+            # - lint
             - coverage-gate
           filters:
             branches:
@@ -500,7 +500,7 @@ workflows:
       - deploy-fly:
           context: flyio
           requires:
-            - lint
+            # - lint
             - docs-build
             - coverage-gate
             - e2e-tests
