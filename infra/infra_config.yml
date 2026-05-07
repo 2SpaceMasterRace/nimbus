@@ -1,7 +1,7 @@
 app:
   name: ospsd-team-2
   org: personal
-  region: ewr
+  region: iad
 
 image:
   # This is the image Fly.io builds and pushes when you run `fly deploy`.

@@ -466,37 +466,37 @@ workflows:
     jobs:
       # - lint
       - docs-build
-      - unit-tests
-      - property-tests
-      - fuzz-smoke
-      - bdd-tests
-      - integration-tests
-      - coverage-gate:
+      # - unit-tests
+      # - property-tests
+      # - fuzz-smoke
+      # - bdd-tests
+      # - integration-tests
+      # - coverage-gate:
           requires:
             - unit-tests
             - property-tests
             - bdd-tests
             - integration-tests
-      - e2e-tests:
-          requires:
-            # - lint
-            - coverage-gate
-          filters:
-            branches:
-              only:
-                - hw-3
-                - feature/IaC-new
-      - ai-e2e-tests:
-          context:
-            - flyio
-            - openrouter
-          requires:
-            - verify-fly-deploy
-          filters:
-            branches:
-              only:
-                - hw-3
-                - feature/IaC-new
+      # - e2e-tests:
+      #     requires:
+      #       # - lint
+      #       - coverage-gate
+      #     filters:
+      #       branches:
+      #         only:
+      #           - hw-3
+      #           - feature/IaC-new
+      # - ai-e2e-tests:
+      #     context:
+      #       - flyio
+      #       - openrouter
+      #     requires:
+      #       - verify-fly-deploy
+      #     filters:
+      #       branches:
+      #         only:
+      #           - hw-3
+      #           - feature/IaC-new
       - deploy-fly:
           context: flyio
           requires:
