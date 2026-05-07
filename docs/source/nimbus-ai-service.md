@@ -1,5 +1,16 @@
 # Nimbus AI Service — Bridge Builder's Guide
 
+:::{note}
+This page is a long, prescriptive *tutorial* for building a Slack bridge from
+scratch. It uses the package name `nimbus_slack_bridge` and a layout
+(`signing.py`, `slack_verify.py`, `app.py`, …) that does **not** match the
+bridge actually shipped in this repository.
+
+For the bridge as deployed today — package layout, HTTP routes, signature
+verification, dedupe, attachment handling, telemetry, and the Fly app shape —
+read {doc}`nimbus/slack-bridge`.
+:::
+
 ## Where Do I Get `AI_SERVER_SIGNING_SECRET`?
 
 **Ask Team 2 (the Nimbus team) to send it to you privately** — a Slack DM or

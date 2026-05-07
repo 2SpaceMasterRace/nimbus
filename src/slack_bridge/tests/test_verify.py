@@ -8,6 +8,8 @@ import time
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 
 def _make_signature(secret: str, timestamp: str, body: bytes) -> str:
     canonical = f"v0:{timestamp}:{body.decode('utf-8')}"

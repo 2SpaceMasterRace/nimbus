@@ -12,6 +12,7 @@ contract boundaries as the storage stack.
 | `openrouter_ai_client_impl` | OpenRouter implementation, pydantic-ai loop, CLI, model fallback, cloud-storage tool bindings |
 | `nimbus_runtime` | Transport-neutral chat orchestration, sessions, durable actions, artifacts, confirmation flows, attachment uploads, telemetry |
 | `ai_server` | FastAPI wrapper routes, HMAC auth, idempotency, rate limiting, session endpoints |
+| `slack_bridge` | Standalone Slack-facing service: verifies Slack signatures, normalizes events and slash commands into signed Nimbus turns, posts replies back via `chat_client_api` |
 
 ## Runtime behavior
 
@@ -46,10 +47,13 @@ agent-platform-design-2
 agent-platform-design
 agent-platform-implementation-1
 bridge-contract
+slack-bridge
 sessions
 attachments
 smoke-tests
 ```
 
-The older {doc}`../nimbus-ai-service` page remains as the long bridge-builder
-reference. The pages in this section are the shorter maintained path for HW3.
+The older {doc}`../nimbus-ai-service` page remains as a long, prescriptive
+bridge-builder tutorial. {doc}`slack-bridge` documents the bridge as actually
+shipped in `src/slack_bridge`; prefer it for current behavior, package layout,
+endpoints, telemetry, and deployment shape.
