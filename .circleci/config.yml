@@ -318,6 +318,10 @@ jobs:
     executor: python-executor
     steps:
       - checkout
+      - setup-uv
+      - restore-uv-cache
+      - install-dependencies
+      - save-uv-cache
       - fly-setup
       - save-fly-cache
       - run:
@@ -328,6 +332,15 @@ jobs:
             python scripts/ci/write_fly_context.py --config fly.toml --releases-json ci-state/releases-before-deploy.json > ci-state/fly-context.env
             cat ci-state/fly-context.env >> $BASH_ENV
             source $BASH_ENV
+      - run:
+          name: Plan Fly infrastructure with Nimbus IaC
+          command: |
+            uv run python infra/nimbus_iac.py refresh
+            uv run python infra/nimbus_iac.py plan
+      - run:
+          name: Apply Fly infrastructure with Nimbus IaC
+          command: |
+            uv run python infra/nimbus_iac.py apply
       - run:
           name: Deploy to Fly.io
           command: |
@@ -376,10 +389,16 @@ jobs:
           command: |
             source ci-state/fly-context.env
             flyctl status --app "$FLY_APP" --config fly.toml --json > ci-state/status-after-deploy.json
+      - run:
+          name: Refresh Fly infrastructure state
+          command: |
+            uv run python infra/nimbus_iac.py refresh
+            uv run python infra/nimbus_iac.py output
       - persist_to_workspace:
           root: .
           paths:
             - ci-state
+            - infra/.infra_state.json
 
   verify-fly-deploy:
     executor: python-executor
