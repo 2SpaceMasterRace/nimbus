@@ -483,7 +483,9 @@ workflows:
             - coverage-gate
           filters:
             branches:
-              only: hw-3
+              only:
+                - hw-3
+                - feature/IaC-new
       - ai-e2e-tests:
           context:
             - flyio
@@ -492,7 +494,9 @@ workflows:
             - verify-fly-deploy
           filters:
             branches:
-              only: hw-3
+              only:
+                - hw-3
+                - feature/IaC-new
       - deploy-fly:
           context: flyio
           requires:
@@ -502,7 +506,9 @@ workflows:
             - e2e-tests
           filters:
             branches:
-              only: hw-3
+              only:
+                - hw-3
+                - feature/IaC-new
       - verify-fly-deploy:
           context:
             - flyio
@@ -511,4 +517,6 @@ workflows:
             - deploy-fly
           filters:
             branches:
-              only: hw-3
+              only:
+                - hw-3
+                - feature/IaC-new
