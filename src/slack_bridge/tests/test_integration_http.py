@@ -248,7 +248,7 @@ def test_full_slash_command_path_dispatches_through_real_background_task(
     turn = captured_turns[0]
     assert turn.platform == "slack"
     assert turn.thread_id is None
-    assert turn.message_id == "cmd:trig-int-1"
+    assert turn.message_id == f"cmd:{hashlib.sha256(b'trig-int-1').hexdigest()[:48]}"
     assert turn.idempotency_key == "slack:T123:command:trig-int-1"
     assert turn.text == "list reports/"
 

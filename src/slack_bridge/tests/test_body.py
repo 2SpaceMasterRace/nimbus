@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from nimbus_runtime.models import TurnAttachment
 from slack_bridge.body import (
@@ -222,18 +224,25 @@ class TestBuildSlashCommandBody:
         return base
 
     def test_returns_nimbus_turn_request_with_command_shape(self) -> None:
-        """Slash command body uses cmd:{trigger_id} and a null thread_id."""
+        """Slash command body hashes trigger_id into message_id and nulls thread_id."""
         result = build_slash_command_body(self._form())
+        expected_hash = hashlib.sha256(b"trig-1").hexdigest()[:48]
         assert result.platform == "slack"
         assert result.workspace_id == "T123"
         assert result.channel_id == "C9"
         assert result.user_id == "U7"
         assert result.text == "list reports/"
         assert result.thread_id is None
-        assert result.message_id == "cmd:trig-1"
+        assert result.message_id == f"cmd:{expected_hash}"
         assert result.idempotency_key == "slack:T123:command:trig-1"
         assert result.request_id == "slack-cmd-trig-1"
         assert result.attachments == ()
+
+    def test_long_trigger_id_keeps_message_id_within_ai_server_limit(self) -> None:
+        """A realistic ~60-char trigger_id must not overflow the 64-char cap."""
+        trigger_id = "11077352019957.8316111329843.3cdef1234567890abcdef1234567890ab"
+        result = build_slash_command_body(self._form(trigger_id=trigger_id))
+        assert len(result.message_id) <= 64
 
     def test_strips_whitespace_in_command_text(self) -> None:
         """Surrounding whitespace in the user's command text is trimmed."""

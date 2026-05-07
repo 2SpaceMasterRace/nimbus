@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
@@ -254,7 +255,7 @@ def test_handle_slack_command_dispatches_via_chat_client(
     turn = captured[0]
     assert isinstance(turn, NimbusTurnRequest)
     assert turn.thread_id is None
-    assert turn.message_id == "cmd:trig-1"
+    assert turn.message_id == f"cmd:{hashlib.sha256(b'trig-1').hexdigest()[:48]}"
     assert turn.idempotency_key == "slack:T123:command:trig-1"
     assert injected_client.calls == [("C9", "Hi from Nimbus")]
 

@@ -6,6 +6,7 @@ wire format expected by POST /ai/chat/turn on the Nimbus AI service.
 
 from __future__ import annotations
 
+import hashlib
 from typing import TYPE_CHECKING, Final
 
 import structlog
@@ -132,12 +133,16 @@ def build_slash_command_body(
     channel_id = form["channel_id"]
     user_id = form["user_id"]
     text = (command_text if command_text is not None else form.get("text", "")).strip()
+    # The AI server caps message_id at 64 chars; Slack trigger_ids can exceed
+    # that, so derive a deterministic short id for message_id while keeping
+    # the raw trigger_id in idempotency_key/request_id (wider server limits).
+    trigger_hash = hashlib.sha256(trigger_id.encode("utf-8")).hexdigest()[:48]
     return NimbusTurnRequest(
         platform="slack",
         workspace_id=team_id,
         channel_id=channel_id,
         thread_id=None,
-        message_id=f"cmd:{trigger_id}",
+        message_id=f"cmd:{trigger_hash}",
         user_id=user_id,
         text=text,
         idempotency_key=f"slack:{team_id}:command:{trigger_id}",
