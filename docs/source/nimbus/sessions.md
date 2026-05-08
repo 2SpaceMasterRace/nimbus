@@ -1,16 +1,18 @@
 # Sessions and State
 
-Nimbus persists wrapper conversations as JSON files under `AI_SESSION_DIR`.
-When the environment variable is missing, the default is:
+Render deployments persist wrapper conversations and request-state records in
+Postgres. Local development and tests can still persist conversations as JSON
+files under `AI_SESSION_DIR`. When the environment variable is missing, the
+fallback default is:
 
 ```text
 ~/.nimbus/sessions/ai_server
 ```
 
-For Fly.io deployment, set `AI_SESSION_DIR=/data/sessions` and mount a
-persistent volume at `/data`.
+For Render deployment, set `NIMBUS_STATE_BACKEND=postgres` and `DATABASE_URL`.
+Run `uv run python scripts/db/migrate.py` before serving traffic.
 
-## Conversation files
+## Local conversation files
 
 `nimbus_runtime` validates session IDs, hashes very long IDs, and writes
 conversation JSON atomically:
@@ -29,14 +31,19 @@ independently.
 
 ## Expiring state
 
+On Render, expiring request state is stored in Postgres so nonce replay,
+idempotency, and in-flight turn claims survive process restarts and work across
+future replicas. In local fallback mode, entries are small JSON files named by
+SHA-256 of the key.
+
 | Namespace | Owner | Purpose |
 |---|---|---|
 | `signed_request_nonces` | `ai_server.request_state` | Cross-restart replay defense for signed wrapper requests |
 | `idempotent_turns` | `ai_server.router` | Cached `ChatTurnResponse` for safe wrapper retries |
+| `idempotent_turn_claims` | `ai_server.router` | In-flight duplicate protection before side effects |
 | `pending_delete_actions` | `nimbus_runtime.state_store` | Runtime-managed delete confirmations |
 
-Entries are small JSON files named by SHA-256 of the key. Cleanup happens
-opportunistically when the namespace is read or written.
+Cleanup happens opportunistically when the namespace is read or written.
 
 ## Session management endpoints
 

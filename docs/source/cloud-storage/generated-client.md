@@ -56,7 +56,7 @@ Generate from deployed OpenAPI:
 
 ```shell
 uvx openapi-python-client generate \
-  --url https://ospsd-team-2.fly.dev/openapi.json \
+  --url https://nimbus-production.onrender.com/openapi.json \
   --meta uv \
   --output-path src/aws_s3_cloud_storage_service_client
 ```

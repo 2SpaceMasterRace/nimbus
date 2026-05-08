@@ -30,9 +30,7 @@ def _ensure(*, condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
-def _signed_turn_response(
-    *, client: httpx.Client, base_url: str, signing_secret: str
-) -> httpx.Response:
+def _signed_turn_body() -> bytes:
     event_id = f"deploy-verify-{int(time.time())}"
     body = build_message_event_turn(
         workspace_id="TCIRCLECI",
@@ -44,7 +42,12 @@ def _signed_turn_response(
             "text": "Reply with exactly one short sentence saying deploy verification passed.",
         },
     )
-    encoded = encode_turn_body(body)
+    return encode_turn_body(body)
+
+
+def _signed_turn_response(
+    *, client: httpx.Client, base_url: str, signing_secret: str, encoded: bytes
+) -> httpx.Response:
     headers = sign_nimbus_request(body=encoded, secret=signing_secret)
     return client.post(
         f"{base_url}/ai/chat/turn", content=encoded, headers=headers, timeout=30.0
@@ -65,6 +68,17 @@ def main() -> int:
         _ensure(
             condition=health_body.get("status") == "ok",
             message="/health did not return status=ok",
+        )
+
+        ready = client.get(f"{base_url}/ready")
+        _ensure(
+            condition=ready.status_code == 200,
+            message=f"/ready returned {ready.status_code}: {ready.text}",
+        )
+        ready_body = ready.json()
+        _ensure(
+            condition=ready_body.get("status") == "ready",
+            message="/ready did not return status=ready",
         )
 
         ai_health = client.get(f"{base_url}/ai/health")
@@ -120,10 +134,12 @@ def main() -> int:
             message=f"legacy /ai/chat returned {legacy.status_code}",
         )
 
+        encoded_turn = _signed_turn_body()
         signed = _signed_turn_response(
             client=client,
             base_url=base_url,
             signing_secret=args.signing_secret,
+            encoded=encoded_turn,
         )
         _ensure(
             condition=signed.status_code == 200,
@@ -142,6 +158,22 @@ def main() -> int:
             condition=signed_body.get("outcome")
             in {"reply", "confirmation_required", "partial_success", "error"},
             message=f"unexpected wrapper outcome: {signed_body.get('outcome')!r}",
+        )
+
+        duplicate = _signed_turn_response(
+            client=client,
+            base_url=base_url,
+            signing_secret=args.signing_secret,
+            encoded=encoded_turn,
+        )
+        _ensure(
+            condition=duplicate.status_code == 200,
+            message=f"duplicate signed /ai/chat/turn returned {duplicate.status_code}",
+        )
+        duplicate_body = duplicate.json()
+        _ensure(
+            condition=duplicate_body.get("request_id") == signed_body.get("request_id"),
+            message="duplicate signed request did not replay the cached turn",
         )
 
     return 0

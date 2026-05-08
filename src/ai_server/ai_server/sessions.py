@@ -1,10 +1,11 @@
-"""File-based conversation persistence for the AI server.
+"""Conversation persistence for the AI server.
 
-Each session is stored as a single JSON file under ``session_dir``. Safe,
-short session IDs are used directly as the filename stem. Longer logical
-session IDs are mapped to a deterministic SHA-256-based stem so wrapper-facing
-conversation identities can exceed filesystem-friendly name limits without
-changing the public session identity stored in the JSON payload.
+Render deployments store conversations in Postgres. Local development and tests
+store each session as a single JSON file under ``session_dir``. Safe, short
+session IDs are used directly as the filename stem. Longer logical session IDs
+are mapped to a deterministic SHA-256-based stem so wrapper-facing conversation
+identities can exceed filesystem-friendly name limits without changing the
+public session identity stored in the JSON payload.
 
 Writes are atomic (rename-from-temp) so a crash mid-write cannot corrupt the
 file.
@@ -22,6 +23,22 @@ import json
 import re
 from pathlib import Path  # noqa: TC003
 
+from nimbus_runtime.postgres import (
+    delete_session as delete_postgres_session,
+)
+from nimbus_runtime.postgres import (
+    list_sessions as list_postgres_sessions,
+)
+from nimbus_runtime.postgres import (
+    load_session as load_postgres_session,
+)
+from nimbus_runtime.postgres import postgres_enabled
+from nimbus_runtime.postgres import (
+    save_session as save_postgres_session,
+)
+from nimbus_runtime.postgres import (
+    session_exists as postgres_session_exists,
+)
 from openrouter_ai_client_impl.config import DEFAULT_SYSTEM_PROMPT
 
 from ai_client_api import Conversation
@@ -58,6 +75,8 @@ def _session_path(session_dir: Path, session_id: str) -> Path:
 
 def session_exists(session_dir: Path, session_id: str) -> bool:
     """Return whether a persisted session file exists for *session_id*."""
+    if postgres_enabled():
+        return postgres_session_exists(session_id)
     _validate_session_id(session_id)
     return _session_path(session_dir, session_id).is_file()
 
@@ -86,6 +105,8 @@ def load_session(
         ValueError: *session_id* contains path-unsafe characters.
 
     """
+    if postgres_enabled():
+        return load_postgres_session(session_id, system_prompt or DEFAULT_SYSTEM_PROMPT)
     _validate_session_id(session_id)
     path = _session_path(session_dir, session_id)
     if path.is_file():
@@ -114,6 +135,9 @@ def save_session(session_dir: Path, session_id: str, conv: Conversation) -> None
         ValueError: *session_id* contains path-unsafe characters.
 
     """
+    if postgres_enabled():
+        save_postgres_session(session_id, conv)
+        return
     _validate_session_id(session_id)
     path = _session_path(session_dir, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -137,6 +161,8 @@ def delete_session(session_dir: Path, session_id: str) -> bool:
         ValueError: *session_id* contains path-unsafe characters.
 
     """
+    if postgres_enabled():
+        return delete_postgres_session(session_id)
     _validate_session_id(session_id)
     path = _session_path(session_dir, session_id)
     try:
@@ -161,6 +187,8 @@ def list_sessions(session_dir: Path) -> list[str]:
         Sorted list of session ID strings.
 
     """
+    if postgres_enabled():
+        return list(list_postgres_sessions())
     if not session_dir.is_dir():
         return []
 

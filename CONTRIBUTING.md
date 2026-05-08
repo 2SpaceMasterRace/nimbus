@@ -199,7 +199,7 @@ ospsd-team-2/
 ├── scripts/
 ├── .circleci/
 ├── Dockerfile
-├── fly.toml
+├── render.yaml
 ├── main.py
 ├── plans.md
 ├── pyproject.toml
@@ -320,7 +320,9 @@ SESSION_SECRET_KEY=...
 API_KEY=...
 AI_SERVER_API_KEY=...
 AI_SERVER_SIGNING_SECRET=...
-AI_SESSION_DIR=...
+AI_SESSION_DIR=...          # local fallback
+NIMBUS_STATE_BACKEND=postgres
+DATABASE_URL=...            # Render Postgres
 ```
 
 Live provider variables:

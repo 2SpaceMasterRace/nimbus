@@ -653,9 +653,14 @@ export OPENROUTER_FALLBACK_MODEL="..."
 # ai_server
 export AI_SERVER_API_KEY="..."          # shared secret for session-history/session-delete X-API-Key auth
 export AI_SERVER_SIGNING_SECRET="..."   # shared secret for signed POST /ai/chat/turn requests; share this with the bridge team
-export AI_SESSION_DIR="/data/sessions"  # override default ~/.nimbus/sessions/ai_server
+export AI_SESSION_DIR=".nimbus-dev/sessions"  # local fallback when Postgres is disabled
+export NIMBUS_STATE_BACKEND="postgres" # set on Render
+export DATABASE_URL="..."              # Render Postgres connection string
 export AI_RATE_LIMIT_CAPACITY="10"      # per-user token bucket capacity (default: 10)
 export AI_RATE_LIMIT_RPM="10"           # requests-per-minute refill rate (default: 10)
+export NEW_RELIC_LICENSE_KEY="..."
+export SENTRY_DSN="..."
+export LAUNCHDARKLY_SDK_KEY="..."       # production only
 # nimbus CLI
 export NIMBUS_CONTAINER="..."           # S3 bucket the LLM tools are pinned to
 export NIMBUS_SAFE_ROOT="/home/user/workspace"
@@ -668,28 +673,16 @@ export API_KEY="..."
 
 Unit and integration tests should run without real credentials by mocking external calls.
 
-### Fly.io deployment (ai_server)
+### Render deployment
 
-Session files must survive redeploys. Mount a persistent volume:
+`render.yaml` defines the current HW3 deployment:
 
-```toml
-# fly.toml
-[[mounts]]
-  source      = "nimbus_sessions"
-  destination = "/data"
-```
-
-```bash
-# Create the volume (once per region). The current app volume lives in ewr.
-flyctl volumes create nimbus_sessions --region ewr --size 1
-
-# Set the session directory and wrapper-signing secret as secrets.
-# Keep AI_SERVER_API_KEY too if you still use the session-history/session-delete endpoints:
-flyctl secrets set AI_SESSION_DIR=/data/sessions AI_SERVER_SIGNING_SECRET=<key> AI_SERVER_API_KEY=<key>
-
-# Keep at least one machine running so the volume is always accessible:
-flyctl scale count 1 --min 1
-```
+- `hw3-stage` auto-deploys to Render staging.
+- `hw-3` deploys to Render production through a CircleCI deploy hook.
+- Render services use `/ready` for health-gated deploys.
+- Render deployments set `NIMBUS_STATE_BACKEND=postgres` and `DATABASE_URL`.
+- Run `uv run python scripts/db/migrate.py` before serving traffic.
+- Use Render/CircleCI/Doppler for shared secrets; do not commit secret values.
 
 ### mypy `exclude` for test directories
 
@@ -712,7 +705,7 @@ type-checks production code.
 - If concurrent changes directly conflict with your task, stop and ask the user.
 - Avoid opportunistic dependency upgrades or unrelated lockfile changes.
 - Commit messages should explain why the change exists and the high-level what.
-- Write commit subjects in the short, imperative, sentence-case style used in repositories such as `ssh-hypervisor`, `sshx`, and `classes.wtf`: `Fix KVM permission issue in CI`, `Add workflow_dispatch to CI`, `Update fly.toml to Fly Machines API`.
+- Write commit subjects in the short, imperative, sentence-case style used in repositories such as `ssh-hypervisor`, `sshx`, and `classes.wtf`: `Fix KVM permission issue in CI`, `Add workflow_dispatch to CI`, `Update render.yaml deploy health checks`.
 - Prefer a single descriptive line with no trailing period; avoid vague subjects such as `wip`, `misc`, or `updates`.
 - When drafting a PR description or change summary, explain why the change is appropriate and call out any areas that merit careful review.
 - Branch from `main`; do not push directly to `main`.

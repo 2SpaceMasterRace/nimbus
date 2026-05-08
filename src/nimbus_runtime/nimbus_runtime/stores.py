@@ -1,9 +1,8 @@
-"""SQLite-backed Nimbus action, artifact, and session event stores.
+"""Nimbus action, artifact, and session event stores.
 
-The public classes keep the old ``File*Store`` names because the deployment
-primitive is still one local file under ``AI_SESSION_DIR``. Internally, SQLite
-gives us the part JSON files could not: one transaction boundary for
-idempotency, action state, and audit events.
+Render deployments use Postgres-backed stores. Local development and tests keep
+the ``File*Store`` classes, which use SQLite under ``AI_SESSION_DIR`` to provide
+one transaction boundary for idempotency, action state, and audit events.
 """
 
 from __future__ import annotations
@@ -41,15 +40,17 @@ from nimbus_runtime.domain import (
     VerifiedActor,
     validate_action_transition,
 )
+from nimbus_runtime.postgres import connect as pg_connect
+from nimbus_runtime.postgres import transaction as pg_transaction
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Mapping, Sequence
     from pathlib import Path
 
+    from psycopg import Connection as PostgresConnection
 _DB_FILENAME = "nimbus_runtime.sqlite3"
 _SCHEMA_VERSION = 1
 _BUSY_TIMEOUT_MS = 5_000
-
 _LOCKS: dict[Path, threading.RLock] = {}
 _LOCKS_GUARD = threading.Lock()
 
@@ -541,7 +542,6 @@ class _SQLiteStore:
             );
             CREATE INDEX IF NOT EXISTS session_events_by_session
                 ON session_events (tenant_id, session_id, sequence);
-
             CREATE TABLE IF NOT EXISTS actions (
                 action_id TEXT NOT NULL PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
@@ -563,7 +563,6 @@ class _SQLiteStore:
             );
             CREATE INDEX IF NOT EXISTS actions_by_session
                 ON actions (tenant_id, session_id, created_at);
-
             CREATE TABLE IF NOT EXISTS artifacts (
                 artifact_id TEXT NOT NULL PRIMARY KEY,
                 tenant_id TEXT NOT NULL,
@@ -1284,6 +1283,609 @@ class FileArtifactStore(_SQLiteStore):
         actor: VerifiedActor | None,
     ) -> None:
         _append_event(
+            con,
+            _EventAppend(
+                tenant=artifact.tenant,
+                session_id=artifact.session_id,
+                event_type="artifact_created",
+                actor=actor,
+                payload={
+                    "artifact_id": artifact.artifact_id,
+                    "action_id": artifact.action_id,
+                    "kind": artifact.kind,
+                },
+            ),
+        )
+
+    def _append_artifact_event(
+        self,
+        *,
+        artifact: Artifact,
+        actor: VerifiedActor | None,
+    ) -> None:
+        if self._event_store is None:
+            return
+        self._event_store.append(
+            tenant=artifact.tenant,
+            session_id=artifact.session_id,
+            event_type="artifact_created",
+            actor=actor,
+            payload={
+                "artifact_id": artifact.artifact_id,
+                "action_id": artifact.action_id,
+                "kind": artifact.kind,
+            },
+        )
+
+
+def _append_event_postgres(
+    con: PostgresConnection[dict[str, object]],
+    event: _EventAppend,
+) -> SessionEvent:
+    """Append an ordered session event using Postgres advisory locking."""
+    lock_key = f"{event.tenant.tenant_id}:{event.session_id}"
+    con.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
+    row = con.execute(
+        """
+        SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+        FROM session_events
+        WHERE tenant_id = %s AND session_id = %s
+        """,
+        (event.tenant.tenant_id, event.session_id),
+    ).fetchone()
+    if row is None:
+        msg = "Postgres did not return the next event sequence"
+        raise RuntimeError(msg)
+    raw_sequence = row["next_sequence"]
+    if not isinstance(raw_sequence, int | str):
+        msg = "Postgres returned a non-integer event sequence"
+        raise TypeError(msg)
+    sequence = int(raw_sequence)
+    session_event = SessionEvent(
+        tenant=event.tenant,
+        session_id=event.session_id,
+        sequence=sequence,
+        event_id=f"evt-{uuid.uuid4().hex}",
+        event_type=event.event_type,
+        actor=event.actor,
+        payload=dict(event.payload),
+        created_at=datetime.now(UTC),
+    )
+    con.execute(
+        """
+        INSERT INTO session_events (
+            tenant_id, session_id, sequence, event_id, event_type,
+            actor_json, payload_json, created_at, schema_version
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (
+            event.tenant.tenant_id,
+            event.session_id,
+            sequence,
+            session_event.event_id,
+            event.event_type,
+            _json_dumps(_actor_to_json(event.actor)),
+            _json_dumps(dict(event.payload)),
+            _datetime_to_json(session_event.created_at),
+            _SCHEMA_VERSION,
+        ),
+    )
+    return session_event
+
+
+class PostgresSessionEventStore:
+    """Postgres-backed ordered event store for Render deployments."""
+
+    def append(
+        self,
+        *,
+        tenant: TenantIdentity,
+        session_id: str,
+        event_type: str,
+        actor: VerifiedActor | None,
+        payload: Mapping[str, object],
+    ) -> SessionEvent:
+        """Append one event and return it with a sequence number."""
+        with pg_transaction() as con:
+            return _append_event_postgres(
+                con,
+                _EventAppend(
+                    tenant=tenant,
+                    session_id=session_id,
+                    event_type=event_type,
+                    actor=actor,
+                    payload=payload,
+                ),
+            )
+
+    def list_events(
+        self,
+        *,
+        tenant: TenantIdentity,
+        session_id: str,
+        after_sequence: int | None = None,
+        limit: int = 200,
+    ) -> Sequence[SessionEvent]:
+        """Return ordered events for one tenant-scoped session."""
+        with pg_connect() as con:
+            rows = con.execute(
+                """
+                SELECT * FROM session_events
+                WHERE tenant_id = %s AND session_id = %s AND sequence > %s
+                ORDER BY sequence ASC LIMIT %s
+                """,
+                (
+                    tenant.tenant_id,
+                    session_id,
+                    0 if after_sequence is None else after_sequence,
+                    limit,
+                ),
+            ).fetchall()
+        events = [
+            event
+            for row in rows
+            if (
+                event := _safe_row(
+                    FileSessionEventStore._event_from_row,  # noqa: SLF001
+                    cast("sqlite3.Row", row),
+                )
+            )
+            is not None
+        ]
+        return tuple(cast("SessionEvent", event) for event in events)
+
+
+class PostgresActionStore:
+    """Postgres-backed action store with transactional idempotency and events."""
+
+    def __init__(self, *, event_store: SessionEventStore | None = None) -> None:
+        """Create an action store using the configured ``DATABASE_URL``."""
+        self._event_store = event_store
+
+    def create_or_get_by_idempotency(
+        self,
+        *,
+        tenant: TenantIdentity,
+        idempotency_key: str,
+        create: Callable[[], Action],
+    ) -> Action:
+        """Create an action once for a logical tenant-scoped request."""
+        external_event: tuple[Action, str, Mapping[str, object]] | None = None
+        with pg_transaction() as con:
+            existing = self._get_by_idempotency_with_connection(
+                con,
+                tenant=tenant,
+                idempotency_key=idempotency_key,
+            )
+            if existing is not None:
+                return existing
+            action = create()
+            FileActionStore._validate_new_action(  # noqa: SLF001
+                tenant=tenant,
+                idempotency_key=idempotency_key,
+                action=action,
+            )
+            self._insert_action(con, action)
+            event_payload: Mapping[str, object] = {
+                "status": action.status.value,
+                "kind": action.kind.value,
+            }
+            if isinstance(self._event_store, PostgresSessionEventStore):
+                self._append_action_event_with_connection(
+                    con,
+                    action=action,
+                    event_type="action_created",
+                    event_payload=event_payload,
+                )
+            elif self._event_store is not None:
+                external_event = (action, "action_created", event_payload)
+        if external_event is not None:
+            event_action, event_type, event_payload = external_event
+            self._append_action_event(
+                action=event_action,
+                event_type=event_type,
+                event_payload=event_payload,
+            )
+        return action
+
+    def transition(
+        self,
+        *,
+        tenant: TenantIdentity,
+        action_id: str,
+        transition: ActionTransition,
+    ) -> Action | None:
+        """Move an action only if it is still in the expected state."""
+        validate_action_transition(
+            expected=transition.expected,
+            next_status=transition.next_status,
+        )
+        external_event: tuple[Action, str, Mapping[str, object]] | None = None
+        with pg_transaction() as con:
+            action = self._read_action_with_connection(
+                con,
+                tenant=tenant,
+                action_id=action_id,
+            )
+            if action is None or action.status is not transition.expected:
+                return None
+            updated = replace(
+                action,
+                status=transition.next_status,
+                result=(
+                    transition.result
+                    if transition.result is not None
+                    else action.result
+                ),
+                failure=(
+                    transition.failure
+                    if transition.failure is not None
+                    else action.failure
+                ),
+                updated_at=datetime.now(UTC),
+            )
+            self._update_action(con, updated)
+            if isinstance(self._event_store, PostgresSessionEventStore):
+                self._append_action_event_with_connection(
+                    con,
+                    action=updated,
+                    event_type=transition.event_type,
+                    event_payload=transition.event_payload,
+                )
+            elif self._event_store is not None:
+                external_event = (
+                    updated,
+                    transition.event_type,
+                    transition.event_payload,
+                )
+        if external_event is not None:
+            event_action, event_type, event_payload = external_event
+            self._append_action_event(
+                action=event_action,
+                event_type=event_type,
+                event_payload=event_payload,
+            )
+        return updated
+
+    def get(self, *, tenant: TenantIdentity, action_id: str) -> Action | None:
+        """Return one tenant-scoped action if it exists."""
+        with pg_connect() as con:
+            return self._read_action_with_connection(
+                con,
+                tenant=tenant,
+                action_id=action_id,
+            )
+
+    def list_for_session(
+        self,
+        *,
+        tenant: TenantIdentity,
+        session_id: str,
+    ) -> Sequence[Action]:
+        """Return all known actions for one tenant-scoped session."""
+        with pg_connect() as con:
+            rows = con.execute(
+                """
+                SELECT * FROM actions
+                WHERE tenant_id = %s AND session_id = %s
+                ORDER BY created_at ASC
+                """,
+                (tenant.tenant_id, session_id),
+            ).fetchall()
+        actions = [
+            action
+            for row in rows
+            if (
+                action := _safe_row(
+                    FileActionStore._action_from_row,  # noqa: SLF001
+                    cast("sqlite3.Row", row),
+                )
+            )
+            is not None
+        ]
+        return tuple(cast("Action", action) for action in actions)
+
+    def find_latest_awaiting_confirmation(
+        self,
+        *,
+        tenant: TenantIdentity,
+        session_id: str,
+        kind: ActionKind,
+    ) -> Action | None:
+        """Return the newest action waiting for confirmation in one session."""
+        with pg_connect() as con:
+            row = con.execute(
+                """
+                SELECT * FROM actions
+                WHERE tenant_id = %s
+                  AND session_id = %s
+                  AND kind = %s
+                  AND status = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (
+                    tenant.tenant_id,
+                    session_id,
+                    kind.value,
+                    ActionStatus.AWAITING_CONFIRMATION.value,
+                ),
+            ).fetchone()
+        if row is None:
+            return None
+        parsed = _safe_row(
+            FileActionStore._action_from_row,  # noqa: SLF001
+            cast("sqlite3.Row", row),
+        )
+        return cast("Action | None", parsed)
+
+    @staticmethod
+    def _insert_action(
+        con: PostgresConnection[dict[str, object]],
+        action: Action,
+    ) -> None:
+        con.execute(
+            """
+            INSERT INTO actions (
+                action_id, tenant_id, tenant_json, session_id, actor_json,
+                kind, target_json, status, idempotency_key, input_json,
+                result_json, failure_json, created_at, updated_at, expires_at,
+                schema_version
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            _action_sql_values(action),
+        )
+
+    @staticmethod
+    def _update_action(
+        con: PostgresConnection[dict[str, object]],
+        action: Action,
+    ) -> None:
+        con.execute(
+            """
+            UPDATE actions
+            SET status = %s,
+                result_json = %s,
+                failure_json = %s,
+                updated_at = %s,
+                expires_at = %s,
+                schema_version = %s
+            WHERE tenant_id = %s AND action_id = %s
+            """,
+            (
+                action.status.value,
+                _json_dumps(_action_result_to_json(action.result)),
+                _json_dumps(_action_failure_to_json(action.failure)),
+                _datetime_to_json(action.updated_at),
+                (
+                    None
+                    if action.expires_at is None
+                    else _datetime_to_json(action.expires_at)
+                ),
+                _SCHEMA_VERSION,
+                action.tenant.tenant_id,
+                action.action_id,
+            ),
+        )
+
+    def _get_by_idempotency_with_connection(
+        self,
+        con: PostgresConnection[dict[str, object]],
+        *,
+        tenant: TenantIdentity,
+        idempotency_key: str,
+    ) -> Action | None:
+        row = con.execute(
+            """
+            SELECT * FROM actions
+            WHERE tenant_id = %s AND idempotency_key = %s
+            LIMIT 1
+            """,
+            (tenant.tenant_id, idempotency_key),
+        ).fetchone()
+        if row is None:
+            return None
+        parsed = _safe_row(
+            FileActionStore._action_from_row,  # noqa: SLF001
+            cast("sqlite3.Row", row),
+        )
+        return cast("Action | None", parsed)
+
+    def _read_action_with_connection(
+        self,
+        con: PostgresConnection[dict[str, object]],
+        *,
+        tenant: TenantIdentity,
+        action_id: str,
+    ) -> Action | None:
+        row = con.execute(
+            """
+            SELECT * FROM actions
+            WHERE tenant_id = %s AND action_id = %s
+            LIMIT 1
+            """,
+            (tenant.tenant_id, action_id),
+        ).fetchone()
+        if row is None:
+            return None
+        parsed = _safe_row(
+            FileActionStore._action_from_row,  # noqa: SLF001
+            cast("sqlite3.Row", row),
+        )
+        return cast("Action | None", parsed)
+
+    def _append_action_event_with_connection(
+        self,
+        con: PostgresConnection[dict[str, object]],
+        *,
+        action: Action,
+        event_type: str,
+        event_payload: Mapping[str, object],
+    ) -> None:
+        payload = {
+            "action_id": action.action_id,
+            "kind": action.kind.value,
+            "status": action.status.value,
+            **dict(event_payload),
+        }
+        _append_event_postgres(
+            con,
+            _EventAppend(
+                tenant=action.tenant,
+                session_id=action.session_id,
+                event_type=event_type,
+                actor=action.actor,
+                payload=payload,
+            ),
+        )
+
+    def _append_action_event(
+        self,
+        *,
+        action: Action,
+        event_type: str,
+        event_payload: Mapping[str, object],
+    ) -> None:
+        if self._event_store is None:
+            return
+        payload = {
+            "action_id": action.action_id,
+            "kind": action.kind.value,
+            "status": action.status.value,
+            **dict(event_payload),
+        }
+        self._event_store.append(
+            tenant=action.tenant,
+            session_id=action.session_id,
+            event_type=event_type,
+            actor=action.actor,
+            payload=payload,
+        )
+
+
+class PostgresArtifactStore:
+    """Postgres-backed immutable artifact store for Render deployments."""
+
+    def __init__(self, *, event_store: SessionEventStore | None = None) -> None:
+        """Create an artifact store using the configured ``DATABASE_URL``."""
+        self._event_store = event_store
+
+    def create(
+        self,
+        *,
+        artifact: Artifact,
+        actor: VerifiedActor | None = None,
+    ) -> Artifact:
+        """Persist one immutable artifact."""
+        external_event: tuple[Artifact, VerifiedActor | None] | None = None
+        with pg_transaction() as con:
+            existing = self._read_artifact_with_connection(
+                con,
+                tenant=artifact.tenant,
+                artifact_id=artifact.artifact_id,
+            )
+            if existing is not None:
+                return existing
+            self._insert_artifact(con, artifact)
+            if isinstance(self._event_store, PostgresSessionEventStore):
+                self._append_artifact_event_with_connection(
+                    con,
+                    artifact=artifact,
+                    actor=actor,
+                )
+            elif self._event_store is not None:
+                external_event = (artifact, actor)
+        if external_event is not None:
+            artifact, actor = external_event
+            self._append_artifact_event(artifact=artifact, actor=actor)
+        return artifact
+
+    def list_for_session(
+        self,
+        *,
+        tenant: TenantIdentity,
+        session_id: str,
+    ) -> Sequence[Artifact]:
+        """Return artifacts for one tenant-scoped session."""
+        with pg_connect() as con:
+            rows = con.execute(
+                """
+                SELECT * FROM artifacts
+                WHERE tenant_id = %s AND session_id = %s
+                ORDER BY created_at ASC
+                """,
+                (tenant.tenant_id, session_id),
+            ).fetchall()
+        artifacts = [
+            artifact
+            for row in rows
+            if (
+                artifact := _safe_row(
+                    FileArtifactStore._artifact_from_row,  # noqa: SLF001
+                    cast("sqlite3.Row", row),
+                )
+            )
+            is not None
+        ]
+        return tuple(cast("Artifact", artifact) for artifact in artifacts)
+
+    @staticmethod
+    def _insert_artifact(
+        con: PostgresConnection[dict[str, object]],
+        artifact: Artifact,
+    ) -> None:
+        con.execute(
+            """
+            INSERT INTO artifacts (
+                artifact_id, tenant_id, tenant_json, session_id, action_id,
+                kind, uri, payload_json, created_at, schema_version
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                artifact.artifact_id,
+                artifact.tenant.tenant_id,
+                _json_dumps(_tenant_to_json(artifact.tenant)),
+                artifact.session_id,
+                artifact.action_id,
+                artifact.kind,
+                artifact.uri,
+                _json_dumps(_artifact_payload_to_json(artifact.payload)),
+                _datetime_to_json(artifact.created_at),
+                _SCHEMA_VERSION,
+            ),
+        )
+
+    def _read_artifact_with_connection(
+        self,
+        con: PostgresConnection[dict[str, object]],
+        *,
+        tenant: TenantIdentity,
+        artifact_id: str,
+    ) -> Artifact | None:
+        row = con.execute(
+            """
+            SELECT * FROM artifacts
+            WHERE tenant_id = %s AND artifact_id = %s
+            LIMIT 1
+            """,
+            (tenant.tenant_id, artifact_id),
+        ).fetchone()
+        if row is None:
+            return None
+        parsed = _safe_row(
+            FileArtifactStore._artifact_from_row,  # noqa: SLF001
+            cast("sqlite3.Row", row),
+        )
+        return cast("Artifact | None", parsed)
+
+    def _append_artifact_event_with_connection(
+        self,
+        con: PostgresConnection[dict[str, object]],
+        *,
+        artifact: Artifact,
+        actor: VerifiedActor | None,
+    ) -> None:
+        _append_event_postgres(
             con,
             _EventAppend(
                 tenant=artifact.tenant,

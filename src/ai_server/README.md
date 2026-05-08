@@ -243,7 +243,7 @@ or cross-region active-active serving.
 uv run --package ai-server pytest src/ai_server/tests/ -m unit -q
 
 RUN_AI_SERVER_E2E=1 \
-AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev \
+AI_SERVER_BASE_URL=https://nimbus-production.onrender.com \
 AI_SERVER_SIGNING_SECRET="<secret>" \
 uv run pytest src/ai_server/tests/test_e2e.py -m e2e -v
 ```

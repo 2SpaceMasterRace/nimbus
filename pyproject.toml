@@ -103,6 +103,7 @@ ignore = [
 # conftest.py: fixtures use Any for pytest-injected types (tmp_path, monkeypatch
 # variants); D103/D107 docstrings on fixtures are optional; TC002/TC003 same as tests.
 "**/conftest.py" = ["D102", "D103", "D107", "ANN401", "TC002", "TC003", "ARG002"]
+"**/tests/__init__.py" = ["D104"]
 # CLI scripts intentionally use print for human output; TRY003/EM10* would
 # force every ValueError site to define a helper constant which hurts
 # readability more than it helps. PLR0913 would force kwargs-dict plumbing
@@ -112,7 +113,7 @@ ignore = [
 # magic constants are meaningful benchmark thresholds, complex scoring
 # functions resist decomposition, and backslash continuation in run-with
 # examples is idiomatic reStructuredText.
-"**/scripts/*.py" = [
+"**/scripts/**/*.py" = [
     "T201", "PLR2004", "PLR0911", "PLR0912", "C901",
     "D101", "D102", "D103", "D107",
     "TRY300", "S110", "FURB171",

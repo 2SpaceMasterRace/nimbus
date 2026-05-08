@@ -123,7 +123,7 @@ source for the platform vocabulary.
     </div>
     <div>
       <h2>Operations And Scale</h2>
-      <a href="#flyio-volume">Fly.io Volume</a>
+      <a href="#render-postgres">Render Postgres</a>
       <a href="#runtime-telemetry">Runtime Telemetry</a>
       <a href="#structured-logging">Structured Logging</a>
       <a href="#sli">SLI</a>
@@ -938,14 +938,15 @@ development.
 
 ## Operations And Scale
 
-### Fly.io Volume
+### Render Postgres
 
-The current deployment uses a persistent Fly.io volume so session files survive
-redeploys. `AI_SESSION_DIR=/data/sessions` points Nimbus state at that mounted
-volume.
+The current deployment uses Render Postgres so session, nonce, idempotency,
+action, event, and artifact state survive redeploys and can be shared by future
+replicas. `NIMBUS_STATE_BACKEND=postgres` and `DATABASE_URL` select this store.
 
-The single-volume topology supports one writable machine. Multiple writers
-require a shared backend.
+The local file/SQLite fallback remains useful for development, but production
+state should be backed by Postgres before multiple operators or wrappers depend
+on it.
 
 ### Runtime Telemetry
 

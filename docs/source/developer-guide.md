@@ -299,11 +299,12 @@ If a change adds state, document:
 - concurrency policy
 - upgrade trigger for shared infrastructure
 
-### Current topology is single-replica
+### Current topology is Render plus Postgres
 
-File-backed state is correct for one Fly.io machine with a mounted volume. The
-trigger for Valkey/Redis-like shared state is multi-replica deployment or
-multiple wrapper instances.
+Render deployments use Postgres for conversations, replay state, idempotency,
+in-flight claims, actions, events, and artifacts. File/SQLite state is a local
+development fallback. The trigger for Valkey/Redis-like shared state is measured
+hot coordination that Postgres cannot handle cleanly.
 
 ### Observable behavior is API
 

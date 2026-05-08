@@ -54,6 +54,7 @@ from cloud_storage_api import (
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi import Path as ApiPath
 from nimbus_runtime.models import ChatTurnInput as RuntimeChatTurnInput
+from nimbus_runtime.postgres import PostgresStateError, check_ready, postgres_enabled
 from openrouter_ai_client_impl.config import DEFAULT_SYSTEM_PROMPT, OpenRouterConfig
 from openrouter_ai_client_impl.openrouter_client import OpenRouterClient
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -67,7 +68,13 @@ from ai_client_api import (
     AITimeoutError,
 )
 from ai_server.auth import require_api_key, require_signed_service_request
-from ai_server.request_state import delete_state, get_state, put_state
+from ai_server.feature_flags import runtime_flags
+from ai_server.request_state import (
+    delete_state,
+    get_state,
+    put_state,
+    put_state_if_absent,
+)
 from ai_server.sessions import (
     delete_session,
     load_session,
@@ -123,6 +130,7 @@ _RATE_LIMIT_REFILL_RATE: float = _RATE_LIMIT_RPM / 60.0
 _IDEMPOTENCY_TTL_SECONDS = int(os.environ.get("AI_IDEMPOTENCY_TTL_SECONDS", "3600"))
 _IDEMPOTENCY_RECORD_SCHEMA_VERSION = 1
 _IDEMPOTENT_TURN_STATE_NAMESPACE = "idempotent_turns"
+_IDEMPOTENT_TURN_CLAIM_STATE_NAMESPACE = "idempotent_turn_claims"
 _SAFE_CHAT_ID_PATTERN = r"^[A-Za-z0-9_.:-]{1,64}$"
 _SAFE_ATTACHMENT_ID_PATTERN = r"^[A-Za-z0-9_.:-]{1,128}$"
 _SAFE_CONTENT_TYPE_PATTERN = (
@@ -169,6 +177,10 @@ class _CachedTurnLookup:
 
 class _IdempotencyConflictError(ValueError):
     """Raised when a key is reused for a different logical request."""
+
+
+class _IdempotencyInFlightError(ValueError):
+    """Raised when the same logical turn is already executing."""
 
 
 # Module-level registry.  CPython dict operations are GIL-atomic; safe in a
@@ -515,6 +527,7 @@ def get_nimbus_runtime(
     storage: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> NimbusRuntime:
     """Construct the shared Nimbus runtime used by HTTP handlers."""
+    flags = runtime_flags()
     return NimbusRuntime(
         ai_client=client,
         storage=storage,
@@ -522,6 +535,10 @@ def get_nimbus_runtime(
         system_prompt=DEFAULT_SYSTEM_PROMPT,
         tool_container=_tool_container(),
         telemetry=runtime_telemetry,
+        model_turns_enabled=flags.model_turns_enabled,
+        storage_tools_enabled=flags.storage_tools_enabled,
+        delete_actions_enabled=flags.delete_actions_enabled,
+        attachment_uploads_enabled=flags.attachment_uploads_enabled,
     )
 
 
@@ -704,6 +721,44 @@ def _store_cached_turn_response(
         )
 
 
+def _claim_in_flight_turn(cache_key: str, *, request_fingerprint: str) -> None:
+    """Claim an idempotent turn before executing side effects."""
+    write_result = put_state_if_absent(
+        _IDEMPOTENT_TURN_CLAIM_STATE_NAMESPACE,
+        cache_key,
+        value={
+            "schema_version": _IDEMPOTENCY_RECORD_SCHEMA_VERSION,
+            "request_fingerprint": request_fingerprint,
+            "status": "in_flight",
+        },
+        expires_at=time.time() + float(_IDEMPOTENCY_TTL_SECONDS),
+    )
+    if write_result.cleaned_entries:
+        log.info(
+            "idempotency_claim_state_cleaned",
+            cache_key=cache_key,
+            cleaned_entries=write_result.cleaned_entries,
+        )
+    if write_result.stored:
+        return
+    existing = get_state(_IDEMPOTENT_TURN_CLAIM_STATE_NAMESPACE, cache_key)
+    stored_fingerprint = None
+    if existing.value is not None:
+        raw = existing.value.get("request_fingerprint")
+        if isinstance(raw, str):
+            stored_fingerprint = raw
+    if stored_fingerprint is not None and stored_fingerprint != request_fingerprint:
+        msg = "idempotency key was reused with different request parameters"
+        raise _IdempotencyConflictError(msg)
+    msg = "idempotent turn is already in progress"
+    raise _IdempotencyInFlightError(msg)
+
+
+def _release_in_flight_turn(cache_key: str) -> None:
+    """Release an in-flight idempotency claim."""
+    delete_state(_IDEMPOTENT_TURN_CLAIM_STATE_NAMESPACE, cache_key)
+
+
 def _runtime_turn_input(
     *, request_id: str, conversation_id: str, req: ChatTurnRequest
 ) -> RuntimeChatTurnInput:
@@ -771,6 +826,42 @@ def _raise_ai_http_exception(exc: Exception) -> None:
     raise exc
 
 
+def _missing_required_env(names: tuple[str, ...]) -> list[str]:
+    """Return required environment variable names that are unset."""
+    return [name for name in names if not os.environ.get(name, "").strip()]
+
+
+def readiness_failures() -> list[str]:
+    """Return deployment-readiness failures for the AI wrapper surface."""
+    failures: list[str] = []
+    missing = _missing_required_env(
+        (
+            "AI_SERVER_API_KEY",
+            "AI_SERVER_SIGNING_SECRET",
+            "OPENROUTER_API_KEY",
+        )
+    )
+    failures.extend(f"missing env var: {name}" for name in missing)
+    if _tool_container() is not None:
+        storage_missing = _missing_required_env(
+            (
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_REGION",
+            )
+        )
+        failures.extend(f"missing env var: {name}" for name in storage_missing)
+    flags = runtime_flags()
+    if postgres_enabled() and not flags.postgres_state_enabled:
+        failures.append("Postgres state is disabled by feature flag")
+    elif postgres_enabled():
+        try:
+            check_ready()
+        except PostgresStateError as exc:
+            failures.append(str(exc))
+    return failures
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -780,6 +871,22 @@ def _raise_ai_http_exception(exc: Exception) -> None:
 async def health() -> dict[str, str]:
     """Liveness probe — no authentication required."""
     return {"status": "ok", "service": "ai-server"}
+
+
+@router.get("/ready")
+async def ready() -> dict[str, object]:
+    """Readiness probe for Render health-gated deployments."""
+    failures = readiness_failures()
+    if failures:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "not_ready", "failures": failures},
+        )
+    return {
+        "status": "ready",
+        "service": "ai-server",
+        "state_backend": "postgres" if postgres_enabled() else "file",
+    }
 
 
 @router.post("/chat/turn", response_model=ChatTurnResponse)
@@ -847,6 +954,18 @@ async def chat_turn(
             detail="Per-user rate limit exceeded. Try again shortly.",
         )
     try:
+        _claim_in_flight_turn(cache_key, request_fingerprint=request_fingerprint)
+    except _IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    except _IdempotencyInFlightError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    try:
         turn_result = await runtime.run_chat_turn(
             _runtime_turn_input(
                 request_id=request_id,
@@ -860,6 +979,7 @@ async def chat_turn(
             outcome="error",
             latency_ms=int((time.monotonic() - started) * 1000),
         )
+        _release_in_flight_turn(cache_key)
         _raise_ai_http_exception(exc)
 
     response = ChatTurnResponse(
@@ -902,11 +1022,17 @@ async def chat_turn(
         steps=turn_result.steps,
         fallback_used=turn_result.fallback_used,
     )
-    _store_cached_turn_response(
-        cache_key,
-        request_fingerprint=request_fingerprint,
-        response=response,
-    )
+    try:
+        _store_cached_turn_response(
+            cache_key,
+            request_fingerprint=request_fingerprint,
+            response=response,
+        )
+    except Exception:
+        _release_in_flight_turn(cache_key)
+        raise
+    else:
+        _release_in_flight_turn(cache_key)
     return response
 
 
