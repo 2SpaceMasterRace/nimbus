@@ -54,9 +54,9 @@ Create one runtime per process and reuse it:
 ```python
 from pathlib import Path
 
-from aws_client_impl import get_client_impl as get_storage_client
+from aws_client_impl.s3_client import get_client_impl as get_storage_client
 from nimbus_runtime import NimbusRuntime
-from openrouter_ai_client_impl import get_client_impl as get_ai_client
+from openrouter_ai_client_impl.openrouter_client import get_client_impl as get_ai_client
 
 runtime = NimbusRuntime(
     ai_client=get_ai_client(),

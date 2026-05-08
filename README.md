@@ -128,7 +128,8 @@ Use AI through the provider-neutral contract:
 
 ```python
 from ai_client_api import Conversation
-from openrouter_ai_client_impl import OpenRouterClient, OpenRouterConfig
+from openrouter_ai_client_impl.config import OpenRouterConfig
+from openrouter_ai_client_impl.openrouter_client import OpenRouterClient
 
 client = OpenRouterClient(OpenRouterConfig.from_env())
 conversation = Conversation(system="You are concise.")
@@ -361,8 +362,7 @@ open docs/build/html/index.html
 Force a clean rebuild:
 
 ```shell
-cd docs
-make fresh-html
+uv run sphinx-build -E docs/source docs/build/html
 ```
 
 Run executable docs examples:

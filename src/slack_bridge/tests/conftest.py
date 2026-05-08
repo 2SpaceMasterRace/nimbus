@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+
 @pytest.fixture
 def sample_event() -> dict[str, object]:
-    """A minimal Slack message event dict."""
+    """Return a minimal Slack message event dict."""
     return {
         "type": "message",
         "user": "U676767",
@@ -19,7 +20,7 @@ def sample_event() -> dict[str, object]:
 
 @pytest.fixture
 def mention_event() -> dict[str, object]:
-    """A Slack app-mention event dict."""
+    """Return a Slack app-mention event dict."""
     return {
         "type": "app_mention",
         "user": "U676767",

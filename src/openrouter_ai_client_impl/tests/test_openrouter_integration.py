@@ -16,9 +16,10 @@ from __future__ import annotations
 import os
 
 import pytest
+from openrouter_ai_client_impl.config import OpenRouterConfig
+from openrouter_ai_client_impl.openrouter_client import OpenRouterClient
 
 from ai_client_api import Conversation
-from openrouter_ai_client_impl import OpenRouterClient, OpenRouterConfig
 
 pytestmark = [pytest.mark.e2e]
 

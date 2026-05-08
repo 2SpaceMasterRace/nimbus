@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from ai_server.fakes import FakeDeleteResult, FakeObjectInfo, FakeStorageClient
 from ai_server.slack_tools import (
     DeleteFileArgs,
     GetFileInfoArgs,
@@ -12,7 +13,6 @@ from ai_server.slack_tools import (
 from pydantic import ValidationError
 
 from ai_client_api import AIToolArgsInvalidError, Tool
-from tests.conftest import FakeDeleteResult, FakeObjectInfo, FakeStorageClient
 
 pytestmark = pytest.mark.unit
 

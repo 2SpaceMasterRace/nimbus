@@ -80,3 +80,6 @@ plans.md
 # Course materials directory (local only)
 Homeworks/
 Books/
+
+# IaC state file — contains resource IDs; never commit
+infra/.infra_state.json

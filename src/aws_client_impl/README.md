@@ -36,7 +36,7 @@ lets remote callers use the same Python contract without AWS credentials.
 ## Quick Start
 
 ```python
-from aws_client_impl import get_client_impl
+from aws_client_impl.s3_client import get_client_impl
 
 client = get_client_impl()
 
@@ -63,7 +63,7 @@ each method.
 Import the factory in application code:
 
 ```python
-from aws_client_impl import get_client_impl
+from aws_client_impl.s3_client import get_client_impl
 ```
 
 `get_client_impl(*, interactive: bool = False) -> S3Client`

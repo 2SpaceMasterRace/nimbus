@@ -19,11 +19,8 @@ class TestStripMention:
         assert _strip_mention("<@BOT> hello <@U12345>") == "hello <@U12345>"
 
 
-
 class TestBuildEventBody:
-    def test_returns_nimbus_turn_request(
-        self, sample_event: dict[str, object]
-    ) -> None:
+    def test_returns_nimbus_turn_request(self, sample_event: dict[str, object]) -> None:
         result = build_event_body(
             team_id="T123456",
             event_id="E123456",
@@ -35,9 +32,7 @@ class TestBuildEventBody:
         assert result.user_id == "U676767"
         assert result.text == "Hi!!!"
 
-    def test_idempotency_key_is_stable(
-        self, sample_event: dict[str, object]
-    ) -> None:
+    def test_idempotency_key_is_stable(self, sample_event: dict[str, object]) -> None:
         result = build_event_body(
             team_id="T123456",
             event_id="E123456",
@@ -55,9 +50,7 @@ class TestBuildEventBody:
         )
         assert result.thread_id == result.message_id
 
-    def test_strips_mention_from_text(
-        self, mention_event: dict[str, object]
-    ) -> None:
+    def test_strips_mention_from_text(self, mention_event: dict[str, object]) -> None:
         result = build_event_body(
             team_id="T123456",
             event_id="E123456",

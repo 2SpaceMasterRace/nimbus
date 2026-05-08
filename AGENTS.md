@@ -9,8 +9,9 @@ Repository-wide guidance for coding agents. Explicit user instructions override 
 - Read the relevant code before editing. Do not guess from names alone.
 - Before non-trivial implementation, write down the working system model: goals, public contract, invariants, failure modes, dependencies, and verification plan.
 - Treat failures as the default case, not edge cases. Design timeouts, retries, idempotency, backpressure, and observability intentionally.
+- For networked, AI, storage, or stateful work, name the runtime kernel concept being touched before coding: contract, adapter, session, operation, event, action, artifact, policy, executor, verifier, projection, or store.
 - Be wary of the scale, complexity, and maturity of this codebase when making changes. Build an accurate mental model before editing so local fixes do not damage system-level design.
-- Develop the correct intuitions and use the correct tools within the limits of the current context window. Ask the user targeted questions whenever needed instead of guessing past uncertainty.
+- Develop the correct intuitions and use the correct tools within the limits of the current context window. Ask the user targeted questions whenever needed instead of guessing past uncertainty; after one bounded search for an ambiguous file, doc, or requirement, ask instead of spending a long turn on the wrong target.
 - Prefer the smallest correct change that fits the existing design.
 - Prefer atomic, focused changes that are easy to review and revert.
 - Preserve package boundaries and the dependency-injection pattern.
@@ -26,11 +27,14 @@ Repository-wide guidance for coding agents. Explicit user instructions override 
 - Validate boundary data against the bytes or structured payload actually received; do not trust caller-declared sizes, lengths, or digests when the real payload is available for verification.
 - Reject malformed wrapper or transport input early and explicitly; never coerce `None` or non-string values into apparently valid user content.
 - Explicitly translate external SDK transport failures (timeouts, connection resets, connection pool corruption, etc.) into domain errors and regression-test those mappings.
+- Treat destructive or expensive work as an action transaction, not as a chat response: actor, tenant, target, policy decision, idempotency key, status, attempt, verification result, and artifact evidence all matter.
+- Success is not visible until the state transition and the evidence needed to support it are durable.
 - Bound long-lived in-memory registries (rate-limit buckets, nonce caches, session locks, replay caches) so memory growth tracks active workload rather than historical usage.
 - Recovery paths and dangerous bulk operations must have exercised safeguards, not just documented playbooks; prefer fail-closed guards and staged rollout hooks for high-blast-radius changes.
 - Use modern tooling and concepts deliberately when they reduce risk or cognitive load; do not add fashionable machinery without a concrete need.
 - Build systems that would survive a serious production design review: explicit contracts, operational visibility, bounded failure modes, and a believable scale-up path.
 - Avoid both toy shortcuts and speculative platformization. Start with the smallest production-credible primitive, document why it is enough today, and state the trigger for introducing heavier infrastructure such as Redis, queues, or additional databases.
+- Keep one canonical system-design story. If multiple docs disagree, consolidate the current truth or clearly mark older material as historical.
 - Keep `AGENTS.md` and `CONTRIBUTING.md` current when project structure, commands, or conventions materially change.
 
 ---
@@ -51,6 +55,7 @@ Key packages:
 - `src/openrouter_ai_client_impl/`: OpenRouter-backed AI implementation plus the `nimbus` CLI/REPL.
   Also contains `cloud_storage_tools.py` — the tool bindings that expose `CloudStorageClient`
   operations to the LLM.
+- `src/nimbus_runtime/`: transport-neutral runtime kernel for chat orchestration, verified actors, durable actions, session events, artifacts, policy decisions, confirmation flows, attachment upload handling, and runtime telemetry.
 - `src/ai_server/`: FastAPI HTTP wrapper around the AI client. Exposes `/chat`,
   `/sessions/{id}/history`, and `DELETE /sessions/{id}` endpoints. Handles per-session
   concurrency via `asyncio.Lock` and per-user rate limiting via a token bucket keyed by
@@ -67,6 +72,7 @@ Design intent:
 - Each implementation package provides a `get_client_impl()` factory. There is no global DI registry.
 - Treat the repo as two connected axes: the storage vertical and the AI/runtime vertical.
 - Keep channel adapters thin. Shared runtime, tool, and integration logic should live in reusable packages rather than Slack/CLI-specific glue.
+- Treat `nimbus_runtime` as the product kernel: model proposes, runtime authorizes, actions execute, verifiers produce artifacts, and events tell the audit story.
 
 ---
 
@@ -77,6 +83,7 @@ Design intent:
 - The deployed system must be observable and managed as code. Request latency, success rate, and failure rate are required deliverables, not stretch goals.
 - Prefer reusable runtime/domain layers over channel-specific logic so the same capability surface can back CLI, Slack, or future frontends.
 - If introducing MCP, define host, client, server, transport, auth, lifecycle, and failure boundaries explicitly before coding.
+- Complete HW3 work should strengthen the runtime kernel, not merely add another wrapper path. Prefer changes that make actions durable, events replayable, artifacts inspectable, policies explicit, or telemetry actionable.
 
 ---
 
@@ -84,13 +91,15 @@ Design intent:
 
 1. Read the relevant files and search for existing patterns before editing.
 2. Build an accurate working model of the touched subsystem: what owns state, what the transport boundaries are, what invariants exist, and where failure is most likely.
-3. For non-trivial work, define the contract first: user-visible behavior, invariants, state ownership, failure model, timeout/retry/idempotency/backpressure plan, and how the change will be verified.
+3. For non-trivial work, define the contract first: user-visible behavior, invariants, state ownership, scale assumptions, failure model, timeout/retry/idempotency/backpressure plan, and how the change will be verified.
 4. Make the target behavior explicit. For non-trivial changes, encode that behavior in tests.
 5. Implement the smallest correct change that satisfies the request.
 6. Run targeted verification first, then broader checks when the change warrants it.
 7. Finish with a clear summary of what changed, how it was verified, and any remaining risk.
 
 For networked or stateful work, explicitly decide what happens under timeout, partial failure, duplicate delivery, overload, and dependency outage before writing code.
+
+For runtime work, explicitly decide whether the change belongs to the operation layer, action ledger, event log, artifact store, policy module, executor, verifier, projection, or HTTP/CLI adapter. If the answer is "route-local glue," re-check whether the behavior should live in `nimbus_runtime` instead.
 
 When working from an issue, pull request, or GitHub URL, read the linked discussion and directly relevant cross-references before implementing.
 
@@ -104,9 +113,300 @@ Use `AGENTS.md`, the root `CONTRIBUTING.md`, the root `pyproject.toml`, and exis
 
 Read `plans.md` when you need the broader direction for developer productivity and codebase foundations. The long-term goal is a codebase with strong lifecycle support across source control, environments, code generation, CI, release flow, and runtime tooling, and Nimbus should integrate tightly with those foundations rather than bypassing them.
 
+Read the canonical system design or the closest maintained design doc before broad architecture, runtime, storage, observability, or deployment work. If the maintained design source is missing or contradicted by code, update the docs as part of the change.
+
 Prefer dedicated search, read, and edit tools when available. Otherwise use fast, deterministic commands such as `rg`. Parallelize independent reads, searches, and checks when your tooling allows it.
 
 For tool and dependency upgrades, prefer current official documentation and changelogs over memory or third-party blog posts. Use the latest stable guidance deliberately, not blindly.
+
+---
+
+## L7 System Design Mindset
+
+Use this mindset for architecture, runtime, storage, AI, observability, deployment, or any change whose consequences cross a module boundary.
+
+The job is not to draw an impressive diagram. The job is to find the first lie in the diagram.
+
+### Mandatory Design Gate
+
+For non-trivial design or implementation work, do not start by naming technologies. Start with this gate:
+
+```text
+1. What is the naked one-server / one-database version?
+2. What exact requirement breaks that naked version?
+3. What number proves it breaks: QPS, writes/sec, bytes/sec, objects, tenants, latency, memory, disk, or cost?
+4. What is the first bottleneck: CPU, disk, WAL, hot key, lock, network hop, provider limit, cache miss rate, or human workflow?
+5. What is the smallest primitive that removes that bottleneck?
+6. What new failure mode does that primitive introduce?
+7. How do we observe, test, and roll back that primitive?
+```
+
+If a change adds a cache, queue, database, worker, service, protocol, or generated contract without passing this gate, it is probably pattern matching rather than engineering.
+
+### Start With The Spec, Not The Stack
+
+Before choosing components, force the problem into a concrete spec:
+
+- Who is the caller and what exact promise do they observe?
+- What is the public contract: request, response, persisted state, ordering, defaults, errors, and retries?
+- What are the safety invariants that must never break?
+- What are the liveness guarantees the system should eventually provide?
+- What are the expected read/write ratios, payload sizes, object counts, tenant counts, concurrency, and burst patterns?
+- What are the latency goals at p50, p95, and p99?
+- What is the retention period for sessions, events, artifacts, logs, and idempotency records?
+- What is the cost budget or resource ceiling?
+- What does the system do when the caller repeats, reorders, cancels, or times out?
+- What consistency does each operation actually need: strong, read-your-writes, monotonic, eventual, or best-effort?
+- What can the user safely see when the system is degraded?
+
+If a spec answer is unknown, write the assumption down. Do not smuggle unknowns into implementation as if they were facts.
+
+### Start Naked, Then Add Clothing
+
+Begin with the simplest credible topology:
+
+```text
+one process
+one durable store
+one provider client
+one explicit contract
+one testable failure model
+```
+
+Then add complexity only when a specific requirement proves the naked system is out of room.
+
+Examples:
+
+- Add pagination because object listings can exceed memory, response size, or latency budgets.
+- Add an idempotency table because duplicate delivery can overlap in time.
+- Add a queue because action execution exceeds request deadlines or retry safety.
+- Add Postgres because multiple writable processes need shared durable state.
+- Add a cache only when measured or expected hit rate beats the cache's latency, staleness, and operational cost.
+
+Do not start with the final cloud architecture. Start with the smallest system that can be correct, then let constraints pull the design outward.
+
+### Do The Math
+
+Every design must survive back-of-the-envelope math:
+
+- requests per second and writes per second;
+- read/write ratio;
+- object count per tenant and total object count;
+- bytes per upload/download and bytes per second;
+- event/action/artifact rows per session and retention period;
+- memory needed for worst-case result sets and in-flight requests;
+- disk growth for sessions, SQLite, logs, artifacts, and temp files;
+- thread, connection, and file-descriptor counts;
+- provider rate limits and cost per successful operation;
+- p50, p95, p99, and timeout budgets.
+
+Rough math is acceptable. No math is not.
+
+### Cost Every Box
+
+Every new box in a diagram has a bill:
+
+- dollar cost;
+- latency cost;
+- operational cost;
+- cognitive cost;
+- failure modes;
+- migration cost;
+- rollback cost;
+- test cost.
+
+Load balancers, queues, caches, extra services, generated clients, workflow engines, Redis, Postgres, object stores, and MCP servers are not free. If the design adds one, state what it buys and what it makes worse.
+
+### Ask The Uncomfortable Questions
+
+For every proposed design, ask:
+
+- Why this primitive and not the simpler one?
+- Why this primitive and not the stronger one?
+- What breaks first if traffic grows 10x, 100x, or 1000x?
+- What is the hottest key, lock, file, queue, table, partition, connection pool, or API dependency?
+- If we add horizontal nodes, what coordination overhead, network hop, lock contention, duplicate work, or fan-out pressure did we just add?
+- If every app server hits the same row, cache key, session file, tenant bucket, or action ID, did scaling out make the bottleneck worse?
+- Does the database bottleneck on write-ahead log contention, index updates, fsync, connection pool saturation, or transaction conflicts?
+- What happens if the slow dependency becomes 100x slower?
+- What happens if a request succeeds remotely but the local process crashes before recording success?
+- What happens if the same logical request arrives twice at the same time?
+- What happens if retries arrive out of order?
+- What is the cache hit rate? What happens to latency and correctness on misses, stale hits, invalidation, and cache outage?
+- What state can be rebuilt, and what state is authoritative?
+- What is bounded by active workload, and what accidentally grows with historical traffic?
+- How does an operator know which dependency or invariant failed?
+- What is the migration trigger for the next heavier piece of infrastructure?
+
+Do not accept "we can scale it later" unless "later" has a specific signal and a safe migration path.
+
+### Challenge Horizontal Scaling
+
+"Add more nodes" is not a design. It is a hypothesis that must survive coordination math.
+
+Before scaling horizontally, ask:
+
+- What state must be shared across nodes?
+- What requests must be serialized?
+- What idempotency, nonce, session, lock, or rate-limit state is still process-local?
+- What hot keys or hot tenants will every node stampede?
+- What new network hops are in the critical path?
+- What happens during partial deploy, split brain, or one slow node?
+- Can one larger or better-tuned node handle the workload more simply for now?
+
+Horizontal scaling is useful when the workload partitions cleanly or shared state is designed intentionally. It is harmful when it multiplies pressure on the same bottleneck.
+
+### Challenge Caches
+
+Do not assume cache equals fast.
+
+For every cache, define:
+
+- key scope;
+- value shape and max size;
+- TTL and invalidation rule;
+- hit-rate assumption;
+- miss behavior;
+- stale-read tolerance;
+- stampede protection;
+- memory bound;
+- failure behavior when the cache is down;
+- observability for hits, misses, evictions, and stale data.
+
+Use the latency equation mentally:
+
+```text
+effective latency =
+  hit_rate * cache_latency
+  + miss_rate * (cache_latency + source_latency)
+```
+
+If the hit rate is low, the cache can slow the system down while adding stale data and operational failure modes. Be willing to say "no cache yet."
+
+### Work Top Down And Bottom Up
+
+Top down:
+
+- Start from the product promise, users, SLOs, threat model, and failure budget.
+- Derive the public contracts and invariants.
+- Derive the state model.
+- Derive the minimum infrastructure that can preserve those contracts.
+
+Bottom up:
+
+- Trace one real request byte by byte and row by row.
+- Identify every allocation, file write, SDK call, lock, retry, timeout, cache, queue, and event.
+- Ask what happens if each step fails before, during, and after the side effect.
+- Compare the actual behavior to the promised contract.
+
+If top-down intent and bottom-up behavior disagree, the code wins operationally and the docs are lying. Fix one of them.
+
+### Make Tradeoffs Explicit
+
+Every non-trivial design choice should have a tradeoff record, even if it is only a short paragraph in the doc or PR description:
+
+- Decision: what are we choosing?
+- Alternatives: what else could work?
+- Why now: what current pressure justifies this choice?
+- Cost: what complexity, latency, operational burden, or migration risk does this add?
+- Failure mode: how does this choice fail?
+- Reversal: how would we back out or graduate from it?
+- Trigger: what measurement tells us to revisit it?
+
+Examples:
+
+- SQLite vs Postgres: single-node durable coordination now; Postgres when multiple writable processes or worker fleets need shared state.
+- Inline execution vs queue: simpler request path now; queue when action duration or retry behavior threatens HTTP latency/reliability.
+- App-server download vs pre-signed URL: simpler contract now; pre-signed data plane when object size or concurrent downloads threaten memory/disk.
+- JSON snapshot vs event log: easy human-readable state now; event log when replay, audit, or concurrent projections become correctness requirements.
+- Regex command parsing vs typed operation envelope: fast direct path now; typed envelope when multiple clients or confirmations need stable machine contracts.
+
+### Quantify Or Qualify
+
+Avoid vague words unless they are tied to a number or bound:
+
+- "large file" should become a byte limit;
+- "many users" should become active users, concurrent users, and requests per second;
+- "fast" should become p95/p99 target and timeout budget;
+- "reliable" should become explicit failure semantics and alertable signals;
+- "safe retry" should become idempotency key scope, state transition, and replay behavior;
+- "bounded" should name the bound and what happens when it is exceeded.
+
+When exact numbers are unavailable, use a rough order-of-magnitude estimate and label it as an assumption.
+
+### Design The Architecture Of Failure
+
+Ask "how does this break?" before "how does this work?"
+
+For each dependency and state boundary, define user-visible behavior under:
+
+- cache outage;
+- database unavailable;
+- disk full;
+- provider timeout;
+- provider success with lost response;
+- duplicate ID or short-code collision;
+- generated client/server schema mismatch;
+- network link throttled or partitioned;
+- partial regional outage;
+- deployment with old and new code running together;
+- corrupt persisted state;
+- clock skew or expired tokens;
+- one tenant creating a disproportionate hot spot.
+
+Degraded behavior is still behavior. Name it.
+
+### Treat Failures As Histories
+
+Single exceptions are easy. Distributed bugs are histories. For stateful work, reason in sequences:
+
+```text
+create action
+return confirmation_required
+caller retries original request
+confirmation arrives from wrong actor
+provider times out after performing side effect
+process crashes before artifact write
+new process replays session state
+```
+
+Design and test the histories that would embarrass the system in production:
+
+- duplicate delivery while the first request is still executing;
+- side effect succeeds but response is lost;
+- retry arrives after cancellation or expiration;
+- stale confirmation points at a newer action;
+- provider returns ambiguous timeout;
+- projection is stale but action state is correct;
+- corrupt state record appears during replay;
+- one tenant attempts to reference another tenant's session, action, or artifact.
+
+### Do Not Hide Behind Infrastructure
+
+Infrastructure is not a substitute for a contract.
+
+- Redis does not make idempotency correct unless key scope, TTL, conflict behavior, and write ordering are correct.
+- A queue does not make execution reliable unless workers are idempotent and retries are bounded.
+- Postgres does not make state coherent unless transactions match the invariants.
+- Kubernetes does not make the service highly available if local files, process locks, or singleton volumes are still correctness dependencies.
+- A cache does not make a slow path safe if cache misses stampede or stale reads violate the product contract.
+- MCP does not make tools safe if the underlying capability model is unclear.
+
+Add infrastructure only after the access pattern and failure semantics demand it.
+
+### Review Like A Staff Engineer
+
+When reviewing code or docs, lead with the load-bearing questions:
+
+- What contract is this changing?
+- Which invariant is now stronger or weaker?
+- What new state exists, who owns it, and how is it cleaned up?
+- What is the worst duplicate, timeout, crash, or partial-failure history?
+- What is the largest payload, result set, queue, registry, or event this path can create?
+- What is the operator supposed to look at when this fails at 3 a.m.?
+- What test proves the important claim?
+
+Praise is secondary. The useful gift is finding the assumption that would break under pressure while the change is still cheap to fix.
 
 ---
 
@@ -131,6 +431,11 @@ For tool and dependency upgrades, prefer current official documentation and chan
 - Design so today's simple primitive can graduate cleanly to a shared backend later. Preserve upgrade seams even when the current deployment only needs a local file, in-memory cache, or single-node assumption.
 - Prefer strong primitives and clean extension points over narrow one-off features, but do not add abstractions without a concrete need.
 - Use data-focused helper types judiciously; keep behavior close to the data when that improves the model.
+- Separate control-plane work from data-plane work. Nimbus should authorize, record, and verify large storage operations; it should not blindly become the bottleneck for large byte streams when a streaming or pre-signed data-plane path is the right primitive.
+- Choose consistency by workflow. Destructive authorization, idempotency claims, action transitions, and event sequence allocation need strong authority; metrics, presence, and read projections can be eventual.
+- Treat the event log as the narrative truth when it exists. Projections, caches, client timelines, and metrics are rebuildable views, not alternate sources of truth.
+- Store graduation must be access-pattern driven: JSON for simple local snapshots, SQLite for single-node durable coordination, Postgres for multi-process durable state, Valkey/Redis for hot shared coordination, queues for long-running action execution, and workflow engines only for timer-heavy multi-step workflows.
+- During overload, preserve safety/control operations before expensive AI, bulk storage, or background work. Define priority and load-shedding behavior rather than letting the slowest dependency decide.
 
 ---
 
@@ -239,6 +544,7 @@ These constraints preserve the adapter pattern and package layering:
 - `ai_client_api` is the provider-agnostic AI contract; keep model-provider specifics in implementation packages.
 - `aws_client_impl` is the only package that may import `boto3`.
 - `openrouter_ai_client_impl` is a concrete provider implementation, not the abstraction boundary.
+- `nimbus_runtime` owns transport-neutral product semantics for chat turns, verified actors, durable actions, events, artifacts, policy, verification, and telemetry. HTTP, CLI, Slack, and future MCP surfaces should be thin edges over this kernel.
 - `aws_client_service` must obtain a client through `get_client_impl()` and must not instantiate `S3Client` directly.
 - `aws_client_adapter` should preserve the `CloudStorageClient` contract while communicating through the generated HTTP client; do not couple it to service internals.
 - `ai_server` should stay an HTTP adapter around shared AI/runtime capabilities rather than accumulating channel-specific business logic.
@@ -248,6 +554,8 @@ These constraints preserve the adapter pattern and package layering:
 - Preserve the `get_client_impl()` factory contract unless the user explicitly asks to change it.
 - For HW3 cross-vertical work, consume the other team's shared API as a dependency and adapt to it; do not duplicate their interface locally.
 - Keep AI tool exposure schema-first and guardrail-aware; destructive actions need explicit confirmation or an equivalent safety interlock.
+- Destructive tools should not be model-direct side effects. The model may propose; deterministic runtime policy and action state decide; executors perform; verifiers prove.
+- Keep action and event payloads bounded and schema-versioned. Large proof, listings, summaries, or binary data should become artifacts or external object references rather than realtime/event payloads.
 - If MCP is introduced, centralize capability exposure and make host/client/server boundaries explicit.
 - Favor simple, coherent designs that keep behavior predictable and layers clean.
 
@@ -300,6 +608,7 @@ If every test in a file shares the same marker, set `pytestmark = pytest.mark.<m
 - For critical storage or service behavior, prefer property-style tests that encode externally visible guarantees.
 - For fault-prone paths, think in terms of acknowledged durability, retry safety, idempotence, consistency, and recovery after partial failure.
 - For reliability-sensitive flows, test timeout handling, retry behavior, idempotent replay, concurrency ordering, and overload limits where practical.
+- For action/event runtime changes, test duplicate delivery, wrong actor, expired confirmation, invalid state transition, crash/restart recovery where practical, and replay/projection equality once projections exist.
 - For complex stateful or distributed behavior, write down the current system model: core components, state ownership, concurrency boundaries, and failure-prone paths.
 - Maintain a property catalog for critical guarantees and organize it by safety and liveness properties.
 - Keep deployment and topology assumptions current for reliability testing, especially leader/follower roles, quorum expectations, and external dependencies.
@@ -324,6 +633,7 @@ If every test in a file shares the same marker, set `pytestmark = pytest.mark.<m
 - Keep deprecated or superseded approaches out of the main user path; if older behavior must be mentioned, clearly de-emphasize it.
 - Use Sphinx/MyST admonitions for notes and warnings rather than GitHub-specific callout syntax.
 - Keep deployment, IaC, and telemetry docs current enough that a reviewer can reproduce the system and understand the latency/success/failure signals.
+- Keep system-design docs converged. Do not leave multiple competing architecture drafts in the main reading path; maintain one canonical story and link supporting concept pages to it.
 - Verify documentation changes with `uv run sphinx-build docs/source docs/build/html`.
 
 ---
