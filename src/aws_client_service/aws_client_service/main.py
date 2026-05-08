@@ -134,6 +134,7 @@ async def ready() -> dict[str, object]:
     ]
     failures.extend(ai_readiness_failures())
     if failures:
+        log.warning("readiness_check_failed", failures=failures)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"status": "not_ready", "failures": failures},
