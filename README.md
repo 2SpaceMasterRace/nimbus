@@ -128,7 +128,8 @@ Use AI through the provider-neutral contract:
 
 ```python
 from ai_client_api import Conversation
-from openrouter_ai_client_impl import OpenRouterClient, OpenRouterConfig
+from openrouter_ai_client_impl.config import OpenRouterConfig
+from openrouter_ai_client_impl.openrouter_client import OpenRouterClient
 
 client = OpenRouterClient(OpenRouterConfig.from_env())
 conversation = Conversation(system="You are concise.")

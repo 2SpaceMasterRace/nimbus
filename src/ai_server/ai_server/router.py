@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
 import structlog
+from aws_client_impl.s3_client import get_client_impl as get_storage_client_impl
 from cloud_storage_api import (
     CloudStorageClient,  # noqa: TC002 - FastAPI must resolve this dependency annotation at runtime
 )
@@ -72,7 +73,6 @@ from ai_server.sessions import (
     load_session,
     session_exists,
 )
-from aws_client_impl import get_client_impl as get_storage_client_impl
 from nimbus_runtime import (
     NimbusRuntime,
     TurnAttachment,
