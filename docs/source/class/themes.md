@@ -39,7 +39,7 @@ adapter satisfies the same `ABC` the original library satisfied.
 
 **In this repository.** Code that depends on `cloud_storage_api` does not
 know whether the configured implementation is the local AWS S3 client or
-the HTTP adapter that talks to the deployed Fly.io service. The HW3
+the HTTP adapter that talks to the deployed Render service. The HW3
 cross-vertical work pulls another team's `*_api` as a `uv` git dependency
 and integrates it the same way.
 
@@ -112,9 +112,10 @@ databases, environment variables — is described declaratively, kept in
 version control, and rolled out by a pipeline. Terraform is the
 recommended tool; AWS CloudFormation and CDK are accepted alternatives.
 
-**In this repository.** Fly.io app configuration is checked in as code;
-secrets are managed by the platform's secret manager rather than hardcoded
-or committed. Storage and Nimbus deploy through CircleCI on push to `hw-3`.
+**In this repository.** Render Blueprint configuration is checked in as code;
+secrets are managed by Render/CircleCI rather than hardcoded or committed.
+Staging auto-deploys from `hw3-stage`; production deploys through CircleCI on
+`hw-3`.
 
 ## 8. AI integration with tool calling
 

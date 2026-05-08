@@ -116,16 +116,19 @@ Rules enforced by review:
 | Generated client/adapter | transport error or non-OK response | Translate to domain exceptions; do not leak httpx details to callers. |
 | OpenRouter | config, auth, rate limit, timeout, provider error | Translate to `ai_client_api` exceptions; fallback model handles eligible 429/5xx cases. |
 | Wrapper auth | missing headers, stale timestamp, replayed nonce, bad HMAC | Return 401 or 503 without entering runtime execution. |
-| Session persistence | corrupt or missing JSON | Reset to a fresh conversation rather than crashing. |
+| Session persistence | corrupt or missing fallback JSON, missing Postgres row | Reset to a fresh conversation rather than crashing. |
+| Postgres state store | unavailable or stale schema | `/ready` fails closed; stateful request paths do not pretend to be healthy. |
 | Destructive delete | missing explicit confirmation | Return `confirmation_required` with an exact expected reply. |
 
 ## Why the current primitives are enough
 
-The HW3 deployment is a single Fly.io machine with a persistent volume for
-session files. Local files plus expiring JSON state are enough for that topology
-and easier to reason about than a shared Redis/Valkey deployment.
+The HW3 deployment is a Render web service backed by Render Postgres. Postgres
+is the smallest production-credible shared state primitive for conversations,
+nonce replay defense, idempotent turns, in-flight turn claims, actions, events,
+and artifacts. It avoids the accidental single-process assumptions that would
+make auto-deploys, retries, or future horizontal scaling unsafe.
 
-The trigger for a shared backend is explicit: deploy multiple replicas, run
-multiple wrapper instances, or need cross-process rate-limit, nonce, or
-idempotency state. Until then, the file-backed primitive is the smallest
-production-credible shape.
+Local files and SQLite remain the development fallback. The trigger for adding
+Valkey/Redis, queues, or worker fleets is explicit: measured hot coordination,
+long-running actions that exceed HTTP deadlines, or sustained traffic that
+cannot be handled by one web service plus Postgres.

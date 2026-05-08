@@ -77,7 +77,7 @@ ngrok too
    * TODO Add Hurl for HTTP request testing and CI integration [0/4]
      * TODO Write .hurl files for every FastAPI endpoint (upload, download, list, delete)
      * TODO Run hurl --test in CI as a lightweight integration smoke layer
-     * TODO Use Hurl for contract-level testing against the live Fly.io service
+     * TODO Use Hurl for contract-level testing against the live Render service
      * TODO Replace manual curl one-liners in CONTRIBUTING.md with runnable .hurl files
 
 ** TODO Testing [10/24]
@@ -311,7 +311,7 @@ ngrok too
    * DONE Terraform for IaC — nothing touches infrastructure except Terraform
    * DONE Nix flakes for reproducible dev environments and deployment targets
    * DONE AWS OIDC identity federation
-   * TODO Kubernetes (k0s) on both Render and Fly.io [0/2]
+   * TODO Kubernetes (k0s) as a future self-managed target after Render [0/2]
      * TODO Both expose HTTP ingress — k0s targets either via kubeconfig context
      * TODO AWS OIDC and HashiCorp Vault are complementary, not duplicate
    * TODO HashiCorp Vault for runtime secret distribution [0/2]
@@ -342,7 +342,7 @@ ngrok too
    * TODO authlib for OIDC service identity (priority 2.4) [0/3]
      * TODO Use case: workload identity (wrapper -> Nimbus) replaces shared HMAC secret with short-lived signed JWT
      * TODO authlib over oauthlib: authlib is higher-level, has JWT/JWS/JWA/JWE built in; oauthlib is signing-primitives only
-     * TODO Trigger condition: when Fly + workload identity provider (or self-hosted issuer) is in place; not before
+     * TODO Trigger condition: when Render + workload identity provider (or self-hosted issuer) is in place; not before
    * TODO Crypto stack [0/3]
      * TODO Keep stdlib hmac/hashlib for current HMAC-SHA256 signing — correct, audited, no dep risk
      * TODO Add pyca/cryptography ONLY when we need x509/AEAD/asymmetric (i.e. when authlib lands, it pulls cryptography transitively)
@@ -426,7 +426,7 @@ ngrok too
    * TODO WarpStream DST blog post → before building fault injection harness
    * TODO "Millions of Tiny Databases" (Brooker et al., NSDI 2020) → Physalia correctness
    * TODO "Using Lightweight Formal Methods..." (Amazon S3 KV node) → before formal spec
-   * TODO Fly.io Gossip Glomers → all challenges in order, start after HW ships
+   * TODO Distributed Systems Challenge / Gossip Glomers → all challenges in order, start after HW ships
    * TODO Hypothesis stateful testing docs → before writing property-based resume tests
    * TODO Google Python Style Guide
    * TODO Open-source models: Mistral, Kimi, and other self-hostable options

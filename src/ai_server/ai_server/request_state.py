@@ -1,9 +1,8 @@
 """Persistent expiring request state for replay and idempotency handling.
 
-The current deployment runs a single uvicorn process on one Fly.io machine with
-`AI_SESSION_DIR` mounted on a persistent volume. This module stores small JSON
-records under that directory so signed-request nonce state and idempotent turn
-responses survive process restarts.
+Render deployments use Postgres for nonce, idempotency, and in-flight claim
+records. Local development and tests keep the file-backed implementation so the
+same public contract can run without a database.
 """
 
 from __future__ import annotations
@@ -15,6 +14,14 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from nimbus_runtime.postgres import (
+    delete_request_state,
+    get_request_state,
+    postgres_enabled,
+    put_request_state,
+    put_request_state_if_absent,
+)
 
 _DEFAULT_SESSION_DIR = Path.home() / ".nimbus" / "sessions" / "ai_server"
 _REQUEST_STATE_DIRNAME = "_request_state"
@@ -120,6 +127,9 @@ def _cleanup_namespace_locked(namespace: str, *, now: float) -> int:
 
 def get_state(namespace: str, key: str) -> StateReadResult:
     """Return an unexpired request-state entry for *key*, if present."""
+    if postgres_enabled():
+        value, cleaned_entries = get_request_state(namespace, key)
+        return StateReadResult(value=value, cleaned_entries=cleaned_entries)
     lock = _namespace_lock(namespace)
     with lock:
         now = time.time()
@@ -139,6 +149,13 @@ def put_state(
     expires_at: float,
 ) -> int:
     """Store request state for *key* until *expires_at* and return cleanup count."""
+    if postgres_enabled():
+        return put_request_state(
+            namespace,
+            key,
+            value=value,
+            expires_at=expires_at,
+        )
     lock = _namespace_lock(namespace)
     with lock:
         now = time.time()
@@ -155,6 +172,14 @@ def put_state_if_absent(
     expires_at: float,
 ) -> StateWriteResult:
     """Store request state only if *key* does not already have a live value."""
+    if postgres_enabled():
+        stored, cleaned_entries = put_request_state_if_absent(
+            namespace,
+            key,
+            value=value,
+            expires_at=expires_at,
+        )
+        return StateWriteResult(stored=stored, cleaned_entries=cleaned_entries)
     lock = _namespace_lock(namespace)
     with lock:
         now = time.time()
@@ -170,6 +195,9 @@ def put_state_if_absent(
 
 def delete_state(namespace: str, key: str) -> None:
     """Delete any persisted request-state entry for *key*."""
+    if postgres_enabled():
+        delete_request_state(namespace, key)
+        return
     lock = _namespace_lock(namespace)
     with lock:
         _entry_path(namespace, key).unlink(missing_ok=True)

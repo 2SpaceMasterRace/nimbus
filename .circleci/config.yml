@@ -59,35 +59,6 @@ commands:
             python_path="$(command -v python)"
             "$python_path" -c 'import sys; print(sys.executable); print(sys.version); raise SystemExit(0 if sys.version_info >= (3, 12) else 1)'
             uv sync --frozen --all-packages --all-groups --python "$python_path"
-  restore-fly-cache:
-    description: "Restore cached flyctl binary"
-    steps:
-      - restore_cache:
-          keys:
-            - flyctl-v2-{{ arch }}
-  save-fly-cache:
-    description: "Save cached flyctl binary"
-    steps:
-      - save_cache:
-          key: flyctl-v2-{{ arch }}
-          paths:
-            - ~/.fly/bin/flyctl
-  fly-setup:
-    description: "Install and configure flyctl"
-    steps:
-      - restore-fly-cache
-      - run:
-          name: Install flyctl
-          command: |
-            echo 'export FLYCTL_INSTALL="$HOME/.fly"' >> $BASH_ENV
-            echo 'export PATH="$HOME/.fly/bin:$PATH"' >> $BASH_ENV
-            source $BASH_ENV
-            if [ -x "$HOME/.fly/bin/flyctl" ]; then
-              flyctl version
-              exit 0
-            fi
-            curl -L https://fly.io/install.sh | FLYCTL_INSTALL="$HOME/.fly" sh -s -- --non-interactive
-            flyctl version
 
 jobs:
   lint:
@@ -259,41 +230,6 @@ jobs:
       - store_test_results:
           path: test-results/e2e
 
-  ai-e2e-tests:
-    executor: python-executor
-    steps:
-      - checkout
-      - attach_workspace:
-          at: .
-      - setup-uv
-      - restore-uv-cache
-      - install-dependencies
-      - fly-setup
-      - run:
-          name: Run ai_server e2e tests with retries and rollback
-          command: |
-            mkdir -p test-results/ai-e2e
-            cat ci-state/fly-context.env >> $BASH_ENV
-            source ci-state/fly-context.env
-            attempt=1
-            max_attempts=3
-            until RUN_AI_SERVER_E2E=1 AI_SERVER_BASE_URL="$FLY_BASE_URL" uv run pytest \
-              -o addopts="--import-mode=importlib" \
-              src/ai_server/tests/test_e2e.py \
-              -m e2e \
-              --junitxml=test-results/ai-e2e/results.xml \
-              -q; do
-              status=$?
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                scripts/ci/rollback_fly_release.sh ci-state/fly-context.env || true
-                exit "$status"
-              fi
-              sleep $((attempt * 20))
-              attempt=$((attempt + 1))
-            done
-      - store_test_results:
-          path: test-results/ai-e2e
-
   coverage-gate:
     executor: python-executor
     steps:
@@ -314,152 +250,88 @@ jobs:
           path: coverage/combined-html
           destination: coverage/combined
 
-  deploy-fly:
+  security-ci:
     executor: python-executor
     steps:
       - checkout
       - setup-uv
       - restore-uv-cache
       - install-dependencies
-      - save-uv-cache
-      - fly-setup
-      - save-fly-cache
       - run:
-          name: Capture rollback target
+          name: Prepare security report directory
           command: |
-            mkdir -p ci-state
-            flyctl releases --config fly.toml --json --image > ci-state/releases-before-deploy.json
-            python scripts/ci/write_fly_context.py --config fly.toml --releases-json ci-state/releases-before-deploy.json > ci-state/fly-context.env
-            cat ci-state/fly-context.env >> $BASH_ENV
-            source $BASH_ENV
+            mkdir -p security-reports "$HOME/bin"
+            uv export --all-packages --all-groups --format requirements-txt --output-file security-reports/requirements.txt
       - run:
-          name: Plan Fly infrastructure with Nimbus IaC
+          name: truffleHog — verified secret scan
           command: |
-            uv run python infra/nimbus_iac.py refresh
-            uv run python infra/nimbus_iac.py plan
+            curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b "$HOME/bin" latest
+            "$HOME/bin/trufflehog" git file://. --only-verified --fail --json > security-reports/trufflehog.json
       - run:
-          name: Apply Fly infrastructure with Nimbus IaC
+          name: Semgrep CE — SAST
           command: |
-            uv run python infra/nimbus_iac.py apply
+            uvx semgrep scan --config p/python --config p/secrets --json --output security-reports/semgrep.json --error
       - run:
-          name: Deploy to Fly.io
+          name: Safety — dependency vulnerability scan
           command: |
-            source ci-state/fly-context.env
-            set +e
-            flyctl deploy \
-              --app "$FLY_APP" \
-              --remote-only \
-              --config fly.toml \
-              --yes \
-              --strategy immediate \
-              --wait-timeout 15m \
-              --deploy-retries 2
-            status=$?
-            set -e
-            if [ "$status" -ne 0 ]; then
-              flyctl status --app "$FLY_APP" --config fly.toml || true
-              scripts/ci/rollback_fly_release.sh ci-state/fly-context.env || true
-              exit "$status"
-            fi
+            uvx safety check --file security-reports/requirements.txt --full-report
       - run:
-          name: Start newly created Fly machines
+          name: Bandit — Python security scan
           command: |
-            source ci-state/fly-context.env
-            flyctl machines list --app "$FLY_APP" --config fly.toml --json > ci-state/machines-after-deploy.json
-            created_app_machines="$(python - \<<'PY'
-            import json
+            uvx bandit -r src -f json -o security-reports/bandit.json
+      - run:
+          name: Generate CycloneDX SBOM
+          command: |
+            uvx --from cyclonedx-bom cyclonedx-py requirements security-reports/requirements.txt -o security-reports/cyclonedx.json
+      - run:
+          name: GuardDog — report only until baseline is clean
+          command: |
+            uvx guarddog pypi scan -r security-reports/requirements.txt --json > security-reports/guarddog.json || true
+      - store_artifacts:
+          path: security-reports
+          destination: security
 
-            with open("ci-state/machines-after-deploy.json", encoding="utf-8") as file:
-                machines = json.load(file)
-
-            for machine in machines:
-                config = machine.get("config") or {}
-                env = config.get("env") or {}
-                metadata = config.get("metadata") or {}
-                process_group = env.get("FLY_PROCESS_GROUP") or metadata.get("fly_process_group")
-                if machine.get("state") == "created" and process_group == "app":
-                    print(machine["id"])
-            PY
-            )"
-            for machine_id in $created_app_machines; do
-              flyctl machine start "$machine_id" --app "$FLY_APP" --config fly.toml
-            done
-      - run:
-          name: Capture deployed release status
-          command: |
-            source ci-state/fly-context.env
-            flyctl status --app "$FLY_APP" --config fly.toml --json > ci-state/status-after-deploy.json
-      - run:
-          name: Refresh Fly infrastructure state
-          command: |
-            uv run python infra/nimbus_iac.py refresh
-            uv run python infra/nimbus_iac.py output
-      - persist_to_workspace:
-          root: .
-          paths:
-            - ci-state
-            - infra/.infra_state.json
-
-  verify-fly-deploy:
+  deploy-render-production:
     executor: python-executor
     steps:
       - checkout
-      - attach_workspace:
-          at: .
       - setup-uv
       - restore-uv-cache
       - install-dependencies
-      - fly-setup
       - run:
-          name: Load deployed Fly context
+          name: Trigger Render production deploy hook
           command: |
-            cat ci-state/fly-context.env >> $BASH_ENV
-            source $BASH_ENV
+            : "${RENDER_PRODUCTION_DEPLOY_HOOK_URL:?Set in the render-production CircleCI context}"
+            curl -fsS -X POST "$RENDER_PRODUCTION_DEPLOY_HOOK_URL"
       - run:
-          name: Wait for app to be healthy
+          name: Wait for Render readiness
           command: |
-            source ci-state/fly-context.env
+            : "${RENDER_PRODUCTION_BASE_URL:?Set in the render-production CircleCI context}"
+            mkdir -p deploy-reports
+            base_url="${RENDER_PRODUCTION_BASE_URL%/}"
             attempt=1
-            max_attempts=12
-            until curl -sf "$FLY_BASE_URL/health" -H "X-Forwarded-Proto: https" >/dev/null; do
+            max_attempts=30
+            until curl -fsS "$base_url/ready" > deploy-reports/render-ready.json; do
               if [ "$attempt" -ge "$max_attempts" ]; then
-                echo "Timed out waiting for $FLY_BASE_URL/health"
+                echo "Timed out waiting for $base_url/ready"
+                curl -fsS "$base_url/health" || true
                 exit 1
               fi
-              sleep $((attempt * 5))
+              sleep 10
               attempt=$((attempt + 1))
             done
+            cat deploy-reports/render-ready.json
       - run:
-          name: Verify mounted Fly session volume with retries
+          name: Verify deployed Nimbus routes
           command: |
-            source ci-state/fly-context.env
-            attempt=1
-            max_attempts=5
-            volume_check="/bin/sh -c 'mkdir -p /data/sessions && test -d /data/sessions && test -w /data/sessions'"
-            until flyctl ssh console --app "$FLY_APP" --config fly.toml -C "$volume_check"; do
-              status=$?
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                scripts/ci/rollback_fly_release.sh ci-state/fly-context.env || true
-                exit "$status"
-              fi
-              sleep $((attempt * 10))
-              attempt=$((attempt + 1))
-            done
-      - run:
-          name: Verify deployed Nimbus routes with retries
-          command: |
-            source ci-state/fly-context.env
-            attempt=1
-            max_attempts=5
-            until uv run python scripts/ci/verify_deployed_nimbus.py --base-url "$FLY_BASE_URL" --signing-secret "$AI_SERVER_SIGNING_SECRET"; do
-              status=$?
-              if [ "$attempt" -ge "$max_attempts" ]; then
-                scripts/ci/rollback_fly_release.sh ci-state/fly-context.env || true
-                exit "$status"
-              fi
-              sleep $((attempt * 10))
-              attempt=$((attempt + 1))
-            done
+            : "${RENDER_PRODUCTION_BASE_URL:?Set in the render-production CircleCI context}"
+            : "${AI_SERVER_SIGNING_SECRET:?Set in the render-production CircleCI context}"
+            uv run python scripts/ci/verify_deployed_nimbus.py \
+              --base-url "$RENDER_PRODUCTION_BASE_URL" \
+              --signing-secret "$AI_SERVER_SIGNING_SECRET"
+      - store_artifacts:
+          path: deploy-reports/render-ready.json
+          destination: render/ready.json
 
 workflows:
   main:
@@ -484,17 +356,7 @@ workflows:
           filters:
             branches:
               only: hw-3
-      - ai-e2e-tests:
-          context:
-            - flyio
-            - openrouter
-          requires:
-            - verify-fly-deploy
-          filters:
-            branches:
-              only: hw-3
-      - deploy-fly:
-          context: flyio
+      - security-ci:
           requires:
             - lint
             - docs-build
@@ -503,12 +365,11 @@ workflows:
           filters:
             branches:
               only: hw-3
-      - verify-fly-deploy:
+      - deploy-render-production:
           context:
-            - flyio
-            - openrouter
+            - render-production
           requires:
-            - deploy-fly
+            - security-ci
           filters:
             branches:
               only: hw-3

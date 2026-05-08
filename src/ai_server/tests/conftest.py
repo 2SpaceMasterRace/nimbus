@@ -5,8 +5,8 @@ no SessionMiddleware, no AWS deps, no real OpenRouter calls.
 
 E2E tests (marked ``@pytest.mark.e2e``) call the live deployed server.
 They are skipped automatically unless both environment variables are set:
-    AI_SERVER_BASE_URL  e.g. https://ospsd-team-2.fly.dev
-    AI_SERVER_SIGNING_SECRET   the shared secret set via ``fly secrets set``
+    AI_SERVER_BASE_URL  e.g. https://nimbus-production.onrender.com
+    AI_SERVER_SIGNING_SECRET   the shared secret set in Render/CircleCI
 """
 
 from __future__ import annotations

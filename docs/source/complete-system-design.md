@@ -57,16 +57,16 @@ Core invariants
 
 Failure modes
 : Large listings, large uploads/downloads, duplicate delivery, provider
-  timeouts, provider 429s, ambiguous storage outcomes, corrupt local state,
-  process restart, missing persistent volume, disk pressure, thread-pool
+  timeouts, provider 429s, ambiguous storage outcomes, corrupt fallback state,
+  process restart, Postgres outage, stale schema, disk pressure, thread-pool
   saturation, stale credentials, and accidental horizontal scaling.
 
 Dependencies
 : AWS S3 through boto3, the external `cloud_storage_api` package, generated
   OpenAPI client code, OpenRouter through the OpenAI-compatible SDK and
-  pydantic-ai, FastAPI/Starlette, local JSON files, SQLite under
-  `AI_SESSION_DIR`, CircleCI, Fly.io, Sentry, OpenTelemetry, and Sphinx/MyST
-  docs.
+  pydantic-ai, FastAPI/Starlette, Render, Render Postgres, local JSON/SQLite
+  fallback state under `AI_SESSION_DIR`, CircleCI, New Relic, Sentry,
+  OpenTelemetry, LaunchDarkly, and Sphinx/MyST docs.
 
 Verification plan
 : Unit tests protect contracts and small invariants. Integration tests protect
@@ -149,8 +149,8 @@ Non-goals for the next implementation slice:
 
 The current deployment is a modular monolith: one FastAPI process can serve the
 storage API, mount the AI router under `/ai`, and serve built docs under
-`/guide/`. Local state lives under `AI_SESSION_DIR`, usually on a persistent
-Fly.io volume.
+`/guide/`. Render deployments store runtime state in Render Postgres; local
+development can fall back to `AI_SESSION_DIR` files and SQLite.
 
 ```text
                     +-----------------------------+
@@ -680,7 +680,7 @@ Key properties to assert:
 
 At 1 to 10 users, the current system mostly fails through configuration:
 missing secrets, missing S3 credentials, OpenRouter rate limits, missing docs
-build, missing persistent volume.
+build, missing or unmigrated Postgres.
 
 At 10 to 100 active users, the first real bottlenecks are:
 

@@ -207,14 +207,16 @@ regenerated when the service contract changes.
 Trade-off: regeneration adds workflow overhead, but avoids hand-maintained HTTP
 client drift.
 
-### Use File-Backed State for HW3
+### Use Postgres-Backed State for HW3
 
-The current deployment model is single-writer with a persistent Fly.io volume.
-Atomic JSON file writes are enough for sessions, idempotency, nonce replay, and
-pending confirmations.
+The current deployment model uses Render Postgres for sessions, idempotency,
+nonce replay, in-flight claims, events, actions, and artifacts. Atomic JSON file
+writes remain enough for local development and tests, but production state is
+shared and durable.
 
-Trade-off: simple and inspectable today, but not suitable for multiple writable
-replicas. The trigger for Redis/Postgres/Valkey is horizontal scale or
+Trade-off: Postgres adds one managed dependency but removes the accidental
+single-process deployment assumption. The trigger for Redis/Valkey or queues is
+measured hot coordination, action execution that exceeds HTTP deadlines, or
 multi-region active-active serving.
 
 ### Keep `ai_server` Thin

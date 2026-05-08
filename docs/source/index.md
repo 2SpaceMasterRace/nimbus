@@ -66,7 +66,7 @@ uv run --package openrouter-ai-client-impl nimbus
   contract, sessions, attachments, and smoke tests.
 - {doc}`concepts/index` - a glossary and reliability field guide for the
   storage, AI, runtime, testing, and agent-platform concepts used here.
-- {doc}`deployment-operations` - Fly.io deployment, persistent sessions,
+- {doc}`deployment-operations` - Render deployment, Postgres state,
   environment variables, health checks, telemetry, and rollback notes.
 - {doc}`testing` - pytest basics through property, fuzz, integration, and e2e
   workflows.

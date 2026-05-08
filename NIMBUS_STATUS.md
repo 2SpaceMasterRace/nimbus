@@ -89,7 +89,7 @@ Two independent axes: *Cloud-Storage Vertical* (teams 2, 6, 10) exposes `CloudSt
     `src/ai_server/tests/test_router_properties.py`
 - Wrapper replay/idempotency state persists under `AI_SESSION_DIR/_request_state`:
   - signed-request nonce state and idempotent turn responses survive service restarts
-  - the current guarantee assumes one machine / one process, matching `fly.toml`
+  - Render now uses Postgres for cross-restart and future cross-process state
   - coverage lives in `src/ai_server/tests/test_request_state.py` and
     `src/ai_server/tests/test_wrapper_contract.py`
 
@@ -436,7 +436,7 @@ it should integrate) or too broad (asserting incidental implementation detail).
 - Ran all CircleCI commands locally (ruff, mypy --strict, pytest) and made them pass.
 - Updated CircleCI branch filter from `hw-2` to `hw-3`.
 - Reviewed AGENTS.md.
-- Built `ai_server` from scratch: `router.py`, `sessions.py`, `auth.py`, FastAPI app, Dockerfile, Fly.io config.
+- Built `ai_server` from scratch: `router.py`, `sessions.py`, `auth.py`, FastAPI app, and Dockerfile.
 - Added `Conversation.pop_last_user()` to `ai_client_api` for optimistic-mutation rollback.
 - Fixed `AIClient` ABC docstring to accurately describe `AIToolExecutionError`/`AIUnknownToolError` contract.
 - Fixed `_build_model` (P3): attribution headers now threaded via `openai.AsyncOpenAI(default_headers=...)` → `OpenAIProvider(openai_client=...)`.
@@ -481,7 +481,7 @@ it should integrate) or too broad (asserting incidental implementation detail).
 | **Live integration tests** | Moved to `e2e` marker with shape-only assertions; removed `integration`/`local_credentials` markers |
 | **Tests added** | FM4 (3 variants), FM7 control-char, P2 rollback, FM5 atomic save, history endpoint, delete endpoint (idempotency), FM10 token bucket |
 | **READMEs** | Production-grade `ai_client_api/README.md` and `openrouter_ai_client_impl/README.md` |
-| **AGENTS.md** | Added `ai_server` summary, Fly volume/session setup, mypy exclude rationale, env vars for `ai_server` and `nimbus` |
+| **AGENTS.md** | Added `ai_server` summary, deployment/session setup, mypy exclude rationale, env vars for `ai_server` and `nimbus` |
 | **CI** | `uv sync --frozen` in `install-dependencies` command |
 
 ---
@@ -683,8 +683,11 @@ This is a deterministic harness, not GameDay-style production chaos.
 - New `ai-e2e-tests` job that:
 - Uses `openrouter` context (injects `AI_SERVER_SIGNING_SECRET`).
   - Runs `uv run pytest src/ai_server/tests/test_e2e.py -m e2e`.
-- Run it only after `verify-fly-deploy` passes, so the live checks hit a deployment that has already proved it exposes `/ai/chat/turn` and no longer exposes the removed `/ai/chat` route.
-- Derive the Fly target directly from `fly.toml` and roll back automatically if the post-deploy checks still fail after retries.
+- Run it only after the Render deploy hook and `/ready` check pass, so the live
+  checks hit a deployment that has already proved it exposes `/ai/chat/turn` and
+  no longer exposes the removed `/ai/chat` route.
+- Derive the Render target from CircleCI context variables and fail the deploy
+  when post-deploy checks still fail after retries.
 - `src/ai_server/tests/test_e2e.py` now uses `e2e_base_url` / `e2e_signing_secret` for the signed wrapper route.
 
 ### 3. UX/UI polish
@@ -706,14 +709,18 @@ This is a deterministic harness, not GameDay-style production chaos.
 ### 6. Telemetry (mandatory for HW3 final)
 - Prometheus / structlog metrics: request latency, success rate, failure rate per model.
 - The `request_started`/`request_completed` events already carry `latency_ms` — pipe to Prometheus counter/histogram.
-- Fly.io metrics endpoint or Grafana Cloud for the dashboard view.
+- New Relic metrics and Sentry exceptions for the dashboard/on-call view.
 - Structlog already wired in `router.py` and `openrouter_client.py`; add `prometheus_client` or equivalent.
 
 ### 7. Deployment / IaC
-- `fly.toml` has `[[mounts]]` scaffolded; create the volume: `flyctl volumes create nimbus_sessions --region iad --size 1`.
-- Set secrets: `flyctl secrets set AI_SESSION_DIR=/data/sessions AI_SERVER_SIGNING_SECRET=<key>` and keep `AI_SERVER_API_KEY` only if you still need session-management endpoints over API key.
-- Verify `min_machines_running = 1` so the volume is always mounted.
-- Smoke test the deployed endpoint: `curl https://ospsd-team-2.fly.dev/ai/health`.
+- `render.yaml` defines staging and production Render services plus Render
+  Postgres databases.
+- Set secrets in Render/CircleCI: `AI_SERVER_SIGNING_SECRET`,
+  `AI_SERVER_API_KEY`, `OPENROUTER_API_KEY`, AWS credentials, New Relic, and
+  Sentry.
+- Verify `NIMBUS_STATE_BACKEND=postgres`, `DATABASE_URL`, `/ready`, and
+  `scripts/db/migrate.py`.
+- Smoke test the deployed endpoint: `curl https://nimbus-production.onrender.com/ai/health`.
 
 ### 8. FM6: rolling conversation summary
 - When `len(conv.messages()) > max_messages`, trigger a cheap model call to summarize the oldest N turns into a single "conversation summary" system message.
@@ -809,8 +816,8 @@ curl -s "https://openrouter.ai/api/v1/models?supported_parameters=tools" \
   -H "Authorization: Bearer $OPENROUTER_API_KEY" \
   | jq -r '.data[] | select(.id|endswith(":free")) | .id'
 
-# Fly.io health check:
-curl https://ospsd-team-2.fly.dev/ai/health
+# Render health check:
+curl https://nimbus-production.onrender.com/ai/health
 ```
 
 ---
@@ -829,7 +836,9 @@ curl https://ospsd-team-2.fly.dev/ai/health
 | `OPENROUTER_APP_TITLE` | openrouter | No | — | `X-Title` for OpenRouter attribution |
 | `AI_SERVER_API_KEY` | ai_server | No | — | Shared secret for session-history/session-delete `X-API-Key` auth |
 | `AI_SERVER_SIGNING_SECRET` | ai_server | **Yes** | — | Shared secret for signed `POST /ai/chat/turn` requests |
-| `AI_SESSION_DIR` | ai_server | No | `~/.nimbus/sessions/ai_server` | Set to `/data/sessions` on Fly.io |
+| `AI_SESSION_DIR` | ai_server | No | `~/.nimbus/sessions/ai_server` | Local fallback when Postgres is disabled |
+| `NIMBUS_STATE_BACKEND` | nimbus_runtime | No | — | Set to `postgres` on Render |
+| `DATABASE_URL` | nimbus_runtime | Yes on Render | — | Render Postgres connection string |
 | `AI_RATE_LIMIT_CAPACITY` | ai_server | No | `10` | Per-user token bucket max tokens |
 | `AI_RATE_LIMIT_RPM` | ai_server | No | `10` | Refill rate in requests/minute |
 | `AI_SERVER_BASE_URL` | test/e2e | No | — | Required for live e2e tests |
@@ -889,7 +898,7 @@ Verbatim intent and decisions from recent sessions, newest first. Good enough th
 - CI AI e2e job (`ai-e2e-tests` CircleCI job) — not added.
 - Auth walkthrough + Slack adapter design — not started.
 - Telemetry (Prometheus metrics, Grafana dashboard) — not wired.
-- Fly.io volume creation + deployment verification — not done.
+- Render Postgres creation + deployment verification — not done.
 - FM6 rolling conversation summary — still deferred to V2.
 - `prompt_toolkit` keybindings (`/ping`, Ctrl-C cancel) — not added.
 - One-shot task mode (non-interactive, `nimbus --once "upload hello.txt"`) — not implemented.
@@ -961,7 +970,7 @@ Verbatim intent and decisions from recent sessions, newest first. Good enough th
 - `.circleci/config.yml`: `uv sync --all-packages --all-groups` → `uv sync --frozen --all-packages --all-groups`.
 - `src/ai_client_api/README.md`: full production-grade doc (~170 lines): public surface table, Conversation API, Tool schema, event kinds, exception contract, failure-mode guidance, design notes.
 - `src/openrouter_ai_client_impl/README.md`: full doc (~190 lines): env vars table, programmatic usage examples, event listener example, REPL slash commands, failure-mode status table, architecture notes, test commands, benchmark script guidance, free-tier reality check.
-- `AGENTS.md`: added `ai_server` package summary and architecture note; Fly.io volume mount + secrets commands; mypy `exclude` rationale (multiple `tests/` packages collide under flat namespace); env vars for `ai_server` and `nimbus` CLI.
+- `AGENTS.md`: added `ai_server` package summary and architecture note; deployment + secrets commands; mypy `exclude` rationale (multiple `tests/` packages collide under flat namespace); env vars for `ai_server` and `nimbus` CLI.
 - `NIMBUS_STATUS.md`: full rewrite with session log, complete failure-mode status table, remaining backlog in priority order, step-budget rationale, full env-var reference table.
 
 **Ruff/mypy issues encountered and fixed:**
@@ -995,7 +1004,7 @@ Then mid-session: "ignore the auth walkthrough, finish up the implementation com
 **What was implemented in session 1:**
 - Ran all CI commands locally (ruff, mypy, pytest) and made them pass.
 - Updated CircleCI branch filter `hw-2` → `hw-3`.
-- Built `ai_server` from scratch: `main.py`, `router.py`, `sessions.py`, `auth.py`, `Dockerfile`, `fly.toml`.
+- Built `ai_server` from scratch: `main.py`, `router.py`, `sessions.py`, `auth.py`, and `Dockerfile`.
 - `ai_server/router.py`: `POST /chat/turn` with signed auth, `GET /health`, plus session-management endpoints. Per-session `asyncio.Lock` via `_session_locks` dict. `asyncio.to_thread` for blocking `send_message`.
 - `ai_server/sessions.py`: `load_session`, `save_session` (atomic write-tmp-rename), `_validate_session_id` (regex safelist).
 - `ai_client_api/conversation.py`: added `pop_last_user()` for optimistic rollback.

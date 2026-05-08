@@ -650,6 +650,37 @@ class TestChatTurnIdempotency:
         assert "different request parameters" in second.json()["detail"]
         assert len(fake_client.calls) == 1
 
+    def test_in_flight_duplicate_claim_is_rejected_before_side_effects(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setenv("AI_SESSION_DIR", str(tmp_path / "sessions"))
+        body = _turn_body(request_id="req-in-flight")
+        req = router_mod.ChatTurnRequest(**body)  # type: ignore[arg-type]
+        conversation_id = router_mod._compose_conversation_id(req)  # noqa: SLF001
+        cache_key = router_mod._idempotency_cache_key(  # noqa: SLF001
+            req,
+            conversation_id=conversation_id,
+        )
+        fingerprint = router_mod._idempotency_request_fingerprint(  # noqa: SLF001
+            req,
+            conversation_id=conversation_id,
+        )
+
+        try:
+            router_mod._claim_in_flight_turn(  # noqa: SLF001
+                cache_key,
+                request_fingerprint=fingerprint,
+            )
+            with pytest.raises(router_mod._IdempotencyInFlightError):  # noqa: SLF001
+                router_mod._claim_in_flight_turn(  # noqa: SLF001
+                    cache_key,
+                    request_fingerprint=fingerprint,
+                )
+        finally:
+            router_mod._release_in_flight_turn(cache_key)  # noqa: SLF001
+
     def test_same_idempotency_key_from_different_actor_is_not_replayed(
         self,
         client: TestClient,

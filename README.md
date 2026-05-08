@@ -440,24 +440,27 @@ PYTHONFUZZ_NO_ATHERIS=1 uv run python fuzz/fuzz_request_state.py
 | `AI_SERVER_API_KEY` | `ai_server` | Session history/delete auth |
 | `AI_SERVER_SIGNING_SECRET` | `ai_server` | HMAC auth for `/ai/chat/turn` |
 | `AI_SESSION_DIR` | `ai_server`, `nimbus_runtime` | Session and request-state directory |
+| `DATABASE_URL` | `nimbus_runtime` | Postgres state store for Render deployments |
+| `NIMBUS_STATE_BACKEND` | `nimbus_runtime` | Set to `postgres` on Render |
 | `NIMBUS_CONTAINER` | Nimbus tools | Pinned storage container |
 | `NIMBUS_SAFE_ROOT` | Nimbus CLI tools | Local filesystem sandbox |
+| `NEW_RELIC_LICENSE_KEY` | telemetry | Primary production telemetry export |
+| `SENTRY_DSN` | telemetry | Exception reporting |
+| `LAUNCHDARKLY_SDK_KEY` | `ai_server` | Production feature flags and kill switches |
 
 Never commit real secrets. `credentials.env` is gitignored for local use.
 
 ## Deployment Notes
 
-The current deployment target is Fly.io. Session and request-state files need a
-persistent volume:
+The current deployment target is Render. `render.yaml` defines staging and
+production web services plus Render Postgres databases.
 
-```toml
-[[mounts]]
-  source      = "nimbus_sessions"
-  destination = "/data"
-```
-
-Set `AI_SESSION_DIR=/data/sessions` in Fly secrets and keep at least one machine
-running so the volume remains attached.
+- `hw3-stage` auto-deploys to Render staging for fast iteration.
+- `hw-3` deploys to Render production through a CircleCI deploy hook after
+  quality and security gates pass.
+- Render services use `/ready` as the health-gated readiness probe.
+- Render deployments set `NIMBUS_STATE_BACKEND=postgres`; local development can
+  keep the file/SQLite fallback by leaving it unset.
 
 ## Troubleshooting
 

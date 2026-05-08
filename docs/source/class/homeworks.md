@@ -385,7 +385,7 @@ and HW3 deliverables on the `hw-3` branch.
 - HW2 added the `aws_client_service` FastAPI wrapper, the auto-generated
   `aws_client_service_api_client`, and the `cloud_storage_adapter` shim.
 - HW3 added the `nimbus` chat runtime, the `openrouter_ai_client_impl`
-  AI integration, IaC for Fly.io, and the telemetry dashboard.
+  AI integration, Render Blueprint deployment, and the telemetry dashboard.
 
 For the live architecture map, see {doc}`../architecture-overview`. For the
 storage product manual, see {doc}`../cloud-storage/index`. For the AI

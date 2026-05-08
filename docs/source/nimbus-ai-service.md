@@ -4,8 +4,8 @@
 
 **Ask Team 2 (the Nimbus team) to send it to you privately** — a Slack DM or
 a shared secrets manager. This is the one Nimbus secret the bridge team needs.
-They set it as a Fly.io secret when they deployed the Nimbus AI Service. The
-same value must be on both sides or every request returns HTTP 401.
+They set it as a Render environment variable when they deployed the Nimbus AI
+Service. The same value must be on both sides or every request returns HTTP 401.
 
 Do **not** ask Team 2 for `OPENROUTER_API_KEY` or `AI_SERVER_API_KEY`.
 `OPENROUTER_API_KEY` is provider-side only, and `AI_SERVER_API_KEY` is for
@@ -77,7 +77,7 @@ The system has three pieces:
        ↕ Slack API
   [Nimbus Slack Bridge]   ← YOU ARE BUILDING THIS
        ↕ HTTPS + HMAC auth
-  [Nimbus AI Service]     ← already deployed at https://ospsd-team-2.fly.dev
+  [Nimbus AI Service]     ← already deployed at https://nimbus-production.onrender.com
        ↕
   [OpenRouter AI + AWS S3]   ← fully managed by Team 2, not your concern
 
@@ -86,7 +86,7 @@ Your bridge's only job:
   2. Verify it came from Slack (not a random internet caller)
   3. Translate it into Nimbus's JSON format
   4. Sign the request with a shared secret
-  5. POST it to https://ospsd-team-2.fly.dev/ai/chat/turn
+  5. POST it to https://nimbus-production.onrender.com/ai/chat/turn
   6. Read the response
   7. Post the text back to Slack in the right thread
 
@@ -330,7 +330,7 @@ Step 2.8 — Write down all four credentials
   `AI_SERVER_API_KEY`. Those are Nimbus-side secrets, not bridge-side inputs.
 
   You also have:
-    AI_SERVER_BASE_URL    = https://ospsd-team-2.fly.dev
+    AI_SERVER_BASE_URL    = https://nimbus-production.onrender.com
 
 ══════════════════════════════════════════════════════════════════════════════
 PHASE 3: WRITE ALL THE CODE
@@ -397,7 +397,7 @@ Step 3.2 — Create .env.example and .env
   # Copy this file to .env and fill in your values.
   # NEVER commit .env to git.
 
-  AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev
+  AI_SERVER_BASE_URL=https://nimbus-production.onrender.com
   AI_SERVER_SIGNING_SECRET=ask-team-2-for-this
 
   SLACK_SIGNING_SECRET=your-slack-app-signing-secret
@@ -425,7 +425,7 @@ Step 3.3 — Create AGENTS.md
   The Nimbus Slack Bridge receives Slack events (mentions, messages, DMs, slash
   commands), translates them into the Nimbus AI Service request format, signs
   them, and POSTs to POST /ai/chat/turn on the deployed Nimbus AI Service at
-  https://ospsd-team-2.fly.dev. It then posts the returned text back to the
+  https://nimbus-production.onrender.com. It then posts the returned text back to the
   correct Slack thread.
 
   The bridge does NOT implement AI, storage tools, conversation memory, rate
@@ -454,7 +454,7 @@ Step 3.3 — Create AGENTS.md
   ## The Nimbus Contract
 
   Endpoint:  POST /ai/chat/turn
-  Base URL:  https://ospsd-team-2.fly.dev
+  Base URL:  https://nimbus-production.onrender.com
 
   Signing headers required on every request:
     Content-Type:        application/json
@@ -1136,7 +1136,7 @@ Step 3.10 — Create scripts/smoke_test.py
   Run this to verify your signing code and Nimbus connectivity before wiring
   up any real Slack events:
 
-    AI_SERVER_BASE_URL=https://ospsd-team-2.fly.dev \\
+    AI_SERVER_BASE_URL=https://nimbus-production.onrender.com \\
     AI_SERVER_SIGNING_SECRET=<your-secret> \\
     uv run python scripts/smoke_test.py
   """
@@ -1712,7 +1712,7 @@ Step 5.2 — Set up the CircleCI context
   3. Go to "Organization Settings" → "Contexts".
   4. Click "Create Context". Name it: nimbus-bridge
   5. Inside the context, click "Add Environment Variable" for each of:
-       AI_SERVER_BASE_URL        = https://ospsd-team-2.fly.dev
+       AI_SERVER_BASE_URL        = https://nimbus-production.onrender.com
        AI_SERVER_SIGNING_SECRET  = <value from Team 2>
 
   That is all. Do not add `AI_SERVER_API_KEY` or `OPENROUTER_API_KEY` here —
@@ -1779,7 +1779,7 @@ Step 6.4 — Run the smoke test against deployed Nimbus
   is configured on the Nimbus server. Contact Team 2 to verify the value.
 
   If you get "connection refused": AI_SERVER_BASE_URL is wrong or the
-  Nimbus server is down. Try: curl https://ospsd-team-2.fly.dev/health
+  Nimbus server is down. Try: curl https://nimbus-production.onrender.com/health
 
 ══════════════════════════════════════════════════════════════════════════════
 PHASE 7: CONNECT TO REAL SLACK (local testing with ngrok)
@@ -2016,7 +2016,7 @@ The Nimbus Slack Bridge is done when ALL of these are true:
 
   Nimbus integration:
   [ ] uv run python scripts/smoke_test.py returns outcome="reply" from
-      the deployed Nimbus service (https://ospsd-team-2.fly.dev)
+      the deployed Nimbus service (https://nimbus-production.onrender.com)
 
   Slack integration:
   [ ] @mentioning the bot in a channel produces a reply in the same thread
@@ -2107,7 +2107,7 @@ for runtime-managed uploads.
 
 ```bash
 uv run python scripts/ai_server_wrapper_smoke.py \
-  --base-url https://ospsd-team-2.fly.dev \
+  --base-url https://nimbus-production.onrender.com \
   --signing-secret "$AI_SERVER_SIGNING_SECRET" \
   message-event \
   --workspace-id T123TEAM \

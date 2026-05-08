@@ -12,6 +12,7 @@ from typing import Annotated, Any
 
 import sentry_sdk
 import structlog
+from ai_server.router import readiness_failures as ai_readiness_failures
 from ai_server.router import router as ai_router
 from cloud_storage_api import (
     AuthenticationError,
@@ -24,7 +25,7 @@ from cloud_storage_api import (
     StorageBackendError,
 )
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, status
 from fastapi import Path as ApiPath
 from fastapi.responses import FileResponse
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -121,6 +122,23 @@ def remove_temp_file(path: str) -> None:
 async def health() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready() -> dict[str, object]:
+    """Readiness probe for Render health-gated deployments."""
+    failures = [
+        f"missing env var: {name}"
+        for name in ("SESSION_SECRET_KEY", "API_KEY")
+        if not os.environ.get(name, "").strip()
+    ]
+    failures.extend(ai_readiness_failures())
+    if failures:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "not_ready", "failures": failures},
+        )
+    return {"status": "ready", "service": "aws-client-service"}
 
 
 @app.get("/sentry-debug")

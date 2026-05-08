@@ -62,6 +62,9 @@ from nimbus_runtime.models import (
     TurnOutcome,
 )
 from nimbus_runtime.policy import PolicyContext, PolicyDecision, authorize_action
+from nimbus_runtime.postgres import load_session as load_postgres_session
+from nimbus_runtime.postgres import postgres_enabled
+from nimbus_runtime.postgres import save_session as save_postgres_session
 from nimbus_runtime.slack_tools import build_slack_tools
 from nimbus_runtime.stores import (
     ActionStore,
@@ -69,6 +72,9 @@ from nimbus_runtime.stores import (
     FileActionStore,
     FileArtifactStore,
     FileSessionEventStore,
+    PostgresActionStore,
+    PostgresArtifactStore,
+    PostgresSessionEventStore,
     SessionEventStore,
 )
 from nimbus_runtime.telemetry import RuntimeTelemetry, runtime_telemetry
@@ -181,6 +187,8 @@ def _load_session(
     system_prompt: str,
 ) -> Conversation:
     """Load a persisted conversation or create a fresh one."""
+    if postgres_enabled():
+        return load_postgres_session(session_id, system_prompt)
     _validate_session_id(session_id)
     path = _session_path(session_dir, session_id)
     if path.is_file():
@@ -193,6 +201,9 @@ def _load_session(
 
 
 def _save_session(session_dir: Path, session_id: str, conv: Conversation) -> None:
+    if postgres_enabled():
+        save_postgres_session(session_id, conv)
+        return
     _validate_session_id(session_id)
     path = _session_path(session_dir, session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -310,6 +321,10 @@ class NimbusRuntime:
         event_store: SessionEventStore | None = None,
         action_store: ActionStore | None = None,
         artifact_store: ArtifactStore | None = None,
+        model_turns_enabled: bool = True,
+        storage_tools_enabled: bool = True,
+        delete_actions_enabled: bool = True,
+        attachment_uploads_enabled: bool = True,
     ) -> None:
         """Construct the runtime with its injected dependencies."""
         self._ai_client = ai_client
@@ -318,15 +333,34 @@ class NimbusRuntime:
         self._system_prompt = system_prompt
         self._tool_container = tool_container
         self._telemetry = telemetry or runtime_telemetry
-        self._event_store = event_store or FileSessionEventStore(session_dir)
-        self._action_store = action_store or FileActionStore(
-            session_dir,
-            event_store=self._event_store,
-        )
-        self._artifact_store = artifact_store or FileArtifactStore(
-            session_dir,
-            event_store=self._event_store,
-        )
+        self._model_turns_enabled = model_turns_enabled
+        self._storage_tools_enabled = storage_tools_enabled
+        self._delete_actions_enabled = delete_actions_enabled
+        self._attachment_uploads_enabled = attachment_uploads_enabled
+        if event_store is not None:
+            self._event_store = event_store
+        elif postgres_enabled():
+            self._event_store = PostgresSessionEventStore()
+        else:
+            self._event_store = FileSessionEventStore(session_dir)
+        if action_store is not None:
+            self._action_store = action_store
+        elif postgres_enabled():
+            self._action_store = PostgresActionStore(event_store=self._event_store)
+        else:
+            self._action_store = FileActionStore(
+                session_dir,
+                event_store=self._event_store,
+            )
+        if artifact_store is not None:
+            self._artifact_store = artifact_store
+        elif postgres_enabled():
+            self._artifact_store = PostgresArtifactStore(event_store=self._event_store)
+        else:
+            self._artifact_store = FileArtifactStore(
+                session_dir,
+                event_store=self._event_store,
+            )
 
     async def run_text_chat(
         self,
@@ -403,16 +437,49 @@ class NimbusRuntime:
                         actions=(self._action_summary(pending),),
                     )
             elif delete_target is not None:
+                if not self._delete_actions_enabled:
+                    result = await self._persist_direct_result(
+                        turn=turn,
+                        text="Delete actions are temporarily disabled.",
+                        outcome="error",
+                    )
+                    return self._record_result(
+                        turn=turn,
+                        result=result,
+                        started=started,
+                    )
                 result = await self._create_pending_delete(
                     turn=turn,
                     remote_path=delete_target,
                 )
             elif upload_prefix is not None:
+                if not self._attachment_uploads_enabled:
+                    result = await self._persist_direct_result(
+                        turn=turn,
+                        text="Attachment uploads are temporarily disabled.",
+                        outcome="error",
+                    )
+                    return self._record_result(
+                        turn=turn,
+                        result=result,
+                        started=started,
+                    )
                 result = await self._handle_attachment_upload(
                     turn=turn,
                     prefix=upload_prefix,
                 )
             else:
+                if not self._model_turns_enabled:
+                    result = await self._persist_direct_result(
+                        turn=turn,
+                        text="Model-backed replies are temporarily disabled.",
+                        outcome="error",
+                    )
+                    return self._record_result(
+                        turn=turn,
+                        result=result,
+                        started=started,
+                    )
                 ai_response = await self._run_ai_interaction(
                     message=_message_with_attachment_context(
                         text=turn.text,
@@ -433,10 +500,20 @@ class NimbusRuntime:
                     fallback_used=ai_response.fallback_used,
                 )
 
-        latency_ms = int((time.monotonic() - started) * 1000)
         if result is None:
             msg = "runtime did not produce a turn result"
             raise AssertionError(msg)
+        return self._record_result(turn=turn, result=result, started=started)
+
+    def _record_result(
+        self,
+        *,
+        turn: ChatTurnInput,
+        result: ChatTurnResult,
+        started: float,
+    ) -> ChatTurnResult:
+        """Record wrapper telemetry for a completed runtime turn."""
+        latency_ms = int((time.monotonic() - started) * 1000)
         self._telemetry.record_wrapper_turn(
             platform=turn.platform,
             outcome=result.outcome,
@@ -482,7 +559,11 @@ class NimbusRuntime:
         return ai_response
 
     def _wrapper_tools(self) -> list[Tool]:
-        if self._storage is None or self._tool_container is None:
+        if (
+            not self._storage_tools_enabled
+            or self._storage is None
+            or self._tool_container is None
+        ):
             return []
         return build_slack_tools(storage=self._storage, container=self._tool_container)
 
@@ -711,13 +792,19 @@ class NimbusRuntime:
             actions=(self._action_summary(action),),
         )
 
-    async def _handle_delete_confirmation(  # noqa: PLR0911 - exact guard failures
+    async def _handle_delete_confirmation(  # noqa: C901, PLR0911 - exact guard failures
         self,
         *,
         turn: ChatTurnInput,
         pending: Action | None,
         confirmation_target: str,
     ) -> ChatTurnResult:
+        if not self._delete_actions_enabled:
+            return await self._persist_direct_result(
+                turn=turn,
+                text="Delete actions are temporarily disabled.",
+                outcome="error",
+            )
         if pending is None:
             return await self._persist_direct_result(
                 turn=turn,

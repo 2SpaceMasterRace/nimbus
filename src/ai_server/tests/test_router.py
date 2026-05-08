@@ -57,6 +57,110 @@ class TestHealth:
     def test_no_auth_required(self, client: TestClient) -> None:
         assert client.get("/ai/health").status_code == 200
 
+    def test_health_stays_up_when_dependencies_are_missing(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("AI_SERVER_SIGNING_SECRET", raising=False)
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+        assert client.get("/ai/health").status_code == 200
+
+
+class TestReadiness:
+    def test_ready_fails_closed_for_missing_secrets(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("AI_SERVER_SIGNING_SECRET", raising=False)
+
+        resp = client.get("/ai/ready")
+
+        assert resp.status_code == 503
+        failures = resp.json()["detail"]["failures"]
+        assert "missing env var: AI_SERVER_SIGNING_SECRET" in failures
+
+    def test_ready_requires_storage_credentials_when_tools_are_configured(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("AI_SERVER_SIGNING_SECRET", TEST_SIGNING_SECRET)
+        monkeypatch.setenv("AWS_BUCKET_NAME", "test-wrapper-bucket")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID", raising=False)
+        monkeypatch.delenv("AWS_SECRET_ACCESS_KEY", raising=False)
+        monkeypatch.delenv("AWS_REGION", raising=False)
+
+        resp = client.get("/ai/ready")
+
+        assert resp.status_code == 503
+        failures = resp.json()["detail"]["failures"]
+        assert "missing env var: AWS_ACCESS_KEY_ID" in failures
+        assert "missing env var: AWS_SECRET_ACCESS_KEY" in failures
+        assert "missing env var: AWS_REGION" in failures
+
+    def test_ready_succeeds_when_required_configuration_is_present(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("AI_SERVER_SIGNING_SECRET", TEST_SIGNING_SECRET)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.delenv("NIMBUS_STATE_BACKEND", raising=False)
+
+        resp = client.get("/ai/ready")
+
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
+        assert resp.json()["state_backend"] == "file"
+
+    def test_ready_fails_closed_when_postgres_schema_is_not_ready(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import ai_server.router as router_mod
+        from nimbus_runtime.postgres import PostgresStateError
+
+        def fail_ready() -> None:
+            msg = "Postgres runtime state schema is missing or out of date"
+            raise PostgresStateError(msg)
+
+        monkeypatch.setenv("AI_SERVER_SIGNING_SECRET", TEST_SIGNING_SECRET)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("NIMBUS_STATE_BACKEND", "postgres")
+        monkeypatch.setattr(router_mod, "check_ready", fail_ready)
+
+        resp = client.get("/ai/ready")
+
+        assert resp.status_code == 503
+        failures = resp.json()["detail"]["failures"]
+        assert "Postgres runtime state schema is missing or out of date" in failures
+
+    def test_ready_fails_when_postgres_is_disabled_by_flag(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("AI_SERVER_SIGNING_SECRET", TEST_SIGNING_SECRET)
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+        monkeypatch.setenv("AWS_REGION", "us-east-1")
+        monkeypatch.setenv("NIMBUS_STATE_BACKEND", "postgres")
+        monkeypatch.setenv("NIMBUS_FLAG_POSTGRES_STATE_ENABLED", "off")
+
+        resp = client.get("/ai/ready")
+
+        assert resp.status_code == 503
+        failures = resp.json()["detail"]["failures"]
+        assert "Postgres state is disabled by feature flag" in failures
+
 
 class TestRemovedLegacyChatRoute:
     def test_legacy_chat_route_returns_404(self, client: TestClient) -> None:

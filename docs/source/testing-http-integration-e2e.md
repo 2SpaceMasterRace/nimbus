@@ -268,7 +268,7 @@ Example command shape:
 
 ```shell
 RUN_AI_SERVER_E2E=1 \
-AI_SERVER_BASE_URL="https://example.fly.dev" \
+AI_SERVER_BASE_URL="https://example.onrender.com" \
 AI_SERVER_SIGNING_SECRET="..." \
 uv run pytest src/ai_server/tests/test_e2e.py -q --no-cov
 ```
