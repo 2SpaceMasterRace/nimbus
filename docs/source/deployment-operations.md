@@ -33,14 +33,18 @@ Blueprint project with separate staging and production environments:
 | `hw3-stage` | `nimbus-staging` | Render auto-deploy | Fast team iteration |
 | `hw-3` | `nimbus-production` | CircleCI deploy hook | Production/demo gate |
 
-Both services run the Docker image and set `healthCheckPath: /ready`.
-`preDeployCommand` runs the Postgres migration before a service instance is
-promoted.
+Both services run the Docker image and set `healthCheckPath: /ready`. On the
+current free Render service plan, `preDeployCommand` is unavailable, so
+`dockerCommand` runs `scripts/render/start.sh`. That script applies the
+idempotent Postgres migration when `NIMBUS_STATE_BACKEND=postgres`, then `exec`s
+Uvicorn so Render manages the web process directly.
 
 The Blueprint also keeps staging and production databases separate. Database
 `ipAllowList: []` means the databases are not opened for arbitrary public
 network access; application services receive their own `DATABASE_URL` through
-Render-managed environment wiring.
+Render-managed environment wiring. Environment private-network isolation is
+enabled so staging and production resources cannot accidentally communicate
+across their environment boundary over Render's private network.
 
 Relevant platform docs:
 
@@ -65,7 +69,8 @@ Set `NIMBUS_STATE_BACKEND=postgres` and `DATABASE_URL` on Render. Local
 development and existing tests can omit those variables and keep the file/SQLite
 fallback under `AI_SESSION_DIR`.
 
-Run migrations/checks manually when needed:
+The Render startup path runs migrations automatically. Run migrations/checks
+manually only for local verification or one-off maintenance:
 
 ```shell
 uv run python scripts/db/migrate.py

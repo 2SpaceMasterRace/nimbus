@@ -78,6 +78,8 @@ The final course PR remains `hw-3 -> main`.
   - `deploy-render-production` using a Render deploy hook;
   - `/ready` wait and deployed smoke checks.
 - Added `scripts/db/migrate.py` and `scripts/db/check.py`.
+- Added `scripts/render/start.sh` so free-tier Render web services can run the
+  idempotent Postgres migration at startup before `exec`ing Uvicorn.
 - Added Postgres runtime state primitives in `nimbus_runtime.postgres`.
 - Added Postgres-backed runtime stores for events, actions, and artifacts.
 - Added Postgres session/request-state routing with local file fallback.
