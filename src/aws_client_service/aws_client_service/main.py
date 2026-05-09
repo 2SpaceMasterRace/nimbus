@@ -10,11 +10,25 @@ from datetime import (
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
-import sentry_sdk
-import structlog
-from ai_server.router import readiness_failures as ai_readiness_failures
-from ai_server.router import router as ai_router
-from cloud_storage_api import (
+from dotenv import load_dotenv
+
+# OpenTelemetry must be configured before any module that creates instruments
+# at import time. nimbus_runtime.telemetry instantiates a RuntimeTelemetry
+# singleton whose counters/histograms bind to whatever MeterProvider is global
+# at the moment they are created; if configure_opentelemetry runs after the
+# nimbus_runtime import (transitively pulled in by ai_server.router below),
+# those instruments stay bound to the API default and never export to OTLP.
+load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+
+from aws_client_service.otel import configure_opentelemetry  # noqa: E402
+
+configure_opentelemetry("ospsd-team-2")
+
+import sentry_sdk  # noqa: E402
+import structlog  # noqa: E402
+from ai_server.router import readiness_failures as ai_readiness_failures  # noqa: E402
+from ai_server.router import router as ai_router  # noqa: E402
+from cloud_storage_api import (  # noqa: E402
     AuthenticationError,
     CloudStorageClient,
     ContainerNotFoundError,
@@ -24,21 +38,24 @@ from cloud_storage_api import (
     ObjectNotFoundError,
     StorageBackendError,
 )
-from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, status
-from fastapi import Path as ApiPath
-from fastapi.responses import FileResponse
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from pydantic import BaseModel
-from starlette.background import BackgroundTask
-from starlette.middleware.sessions import SessionMiddleware
-from starlette.staticfiles import StaticFiles
+from fastapi import (  # noqa: E402
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    UploadFile,
+    status,
+)
+from fastapi import Path as ApiPath  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # noqa: E402
+from pydantic import BaseModel  # noqa: E402
+from starlette.background import BackgroundTask  # noqa: E402
+from starlette.middleware.sessions import SessionMiddleware  # noqa: E402
+from starlette.staticfiles import StaticFiles  # noqa: E402
 
-from aws_client_service.deps import require_oauth_session
-from aws_client_service.otel import configure_opentelemetry
-from aws_client_service.routes.auth import router as auth_router
-
-load_dotenv(Path(__file__).resolve().parents[3] / ".env")
+from aws_client_service.deps import require_oauth_session  # noqa: E402
+from aws_client_service.routes.auth import router as auth_router  # noqa: E402
 
 sentry_sdk.init(
     dsn=os.getenv("SENTRY_DSN"),
@@ -50,7 +67,6 @@ from aws_client_impl.s3_client import get_client_impl  # noqa: E402, I001  # env
 
 log: Any = structlog.get_logger()
 
-configure_opentelemetry("ospsd-team-2")
 app = FastAPI(title="AWS S3 Cloud Storage Service", version="0.1.0")
 FastAPIInstrumentor.instrument_app(app)
 SPHINX_HTML_DIR = Path(__file__).resolve().parents[3] / "docs" / "build" / "html"

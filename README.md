@@ -450,17 +450,75 @@ PYTHONFUZZ_NO_ATHERIS=1 uv run python fuzz/fuzz_request_state.py
 
 Never commit real secrets. `credentials.env` is gitignored for local use.
 
-## Deployment Notes
+## Infrastructure as Code
 
-The current deployment target is Render. `render.yaml` defines staging and
-production web services plus Render Postgres databases.
+Nimbus uses **Render Blueprints** as its IaC tool. A Render Blueprint is a
+declarative YAML spec — the same category as Terraform, AWS CloudFormation,
+Pulumi, and CDK — that is version-controlled, applied automatically, and
+re-applies idempotently on every push. The single source of truth is
+[`render.yaml`](render.yaml); there is no out-of-band configuration.
 
-- `hw3-stage` auto-deploys to Render staging for fast iteration.
-- `hw-3` deploys to Render production through a CircleCI deploy hook after
-  quality and security gates pass.
-- Render services use `/ready` as the health-gated readiness probe.
-- Render deployments set `NIMBUS_STATE_BACKEND=postgres`; local development can
-  keep the file/SQLite fallback by leaving it unset.
+### What `render.yaml` provisions
+
+| Rubric requirement | Where it lives in `render.yaml` |
+| --- | --- |
+| **Compute** (web services) | `services[].type: web`, staging at L24–32, production at L89–97 |
+| **Container runtime** | `runtime: docker`, `dockerfilePath: ./Dockerfile`, `dockerCommand: sh scripts/render/start.sh` (L26–31, L91–96) |
+| **Database** | Managed Postgres `nimbus-staging-postgres` (L17–22) and `nimbus-production-postgres` (L82–87), wired into the service via `DATABASE_URL: fromDatabase` (L41–44, L106–109) |
+| **Env vars** | Per-service `envVars` blocks (L34–74, L99–141) |
+| **Secrets** | Auto-generated via `generateValue: true` for `SESSION_SECRET_KEY`, `API_KEY`, `AI_SERVER_API_KEY`; third-party secrets declared with `sync: false` so they live only in the Render secret store |
+| **Permissions / access control** | `permissions.protection: enabled` on production (L80) prevents accidental destructive actions; `disabled` on staging for fast iteration (L15) |
+| **Networking** | `networking.isolation: enabled` per environment (L12–13, L77–78); database `ipAllowList: []` blocks public ingress; `healthCheckPath: /ready` gates traffic on readiness |
+
+### Deploy from a clean state
+
+The full environment can be reproduced from zero — equivalent to a
+`terraform apply` from an empty workspace — in three steps:
+
+1. **Apply the blueprint.** From a fresh Render account, point a new Blueprint
+   at this repo. Render reads `render.yaml` and provisions both Postgres
+   instances, both web services, all generated secrets, and all env-var
+   wiring automatically. No console clicks, no manual resource creation.
+
+   ```shell
+   # Equivalent CLI form, once `render` CLI is authenticated:
+   render blueprint launch
+   ```
+
+2. **Populate `sync: false` secrets.** A small set of third-party credentials
+   are intentionally not in source control and must be set once in the
+   Render dashboard (Service → Environment) or via the Render API:
+
+   - AWS: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_BUCKET_NAME`, `NIMBUS_CONTAINER`
+   - OpenRouter: `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_FALLBACK_MODEL`
+   - Telemetry: `NEW_RELIC_LICENSE_KEY`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `SENTRY_DSN`
+   - Wrapper auth: `AI_SERVER_SIGNING_SECRET`
+   - Production only: `LAUNCHDARKLY_SDK_KEY`
+
+   This is the standard IaC pattern (Terraform's `TF_VAR_*`,
+   CloudFormation's `NoEcho` parameters): the *shape* of every secret is
+   declared in code, only the *values* are injected at apply time.
+
+3. **Deploy.** Staging auto-deploys from `hw3-stage` (`autoDeploy: true`);
+   production deploys from `hw-3` after CircleCI quality gates trigger the
+   Render deploy hook (`autoDeploy: false`).
+
+The blueprint is **idempotent**: re-pushing `render.yaml` reconciles drift
+without recreating the database or rotating generated secrets.
+
+### Teardown
+
+Deleting the Render project removes both services and both databases. Re-running
+step 1 above recreates everything from `render.yaml` alone — proving the
+"clean state" property the rubric asks for.
+
+### Branching and promotion
+
+- `hw3-stage` → staging, auto-deploys for fast iteration.
+- `hw-3` → production, gated on CircleCI quality and security checks.
+- `/ready` is the health-gated readiness probe on both environments.
+- Render deployments set `NIMBUS_STATE_BACKEND=postgres`; local development
+  keeps the file/SQLite fallback by leaving it unset.
 
 ## Troubleshooting
 

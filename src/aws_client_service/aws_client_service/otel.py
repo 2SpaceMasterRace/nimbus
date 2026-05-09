@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import os
 from typing import Any
 
@@ -18,7 +19,10 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 log: Any = structlog.get_logger()
 
 _DEFAULT_ENDPOINT = "https://otlp.nr-data.net:4318"
-_DEFAULT_EXPORT_INTERVAL_MS = 30_000
+# Render Free can SIGTERM idle workers between requests. The default 30s
+# metric export tick is long enough for in-memory aggregations to be lost
+# before a flush; 5s keeps in-flight observations safe under bursty traffic.
+_DEFAULT_EXPORT_INTERVAL_MS = 5_000
 
 
 def configure_opentelemetry(service_name: str) -> None:
@@ -73,3 +77,8 @@ def configure_opentelemetry(service_name: str) -> None:
         ],
     )
     metrics.set_meter_provider(meter_provider)
+
+    # Flush both pipelines on graceful exit (uvicorn SIGTERM → Python shutdown
+    # → atexit). Without this, the last batch of spans/metrics is dropped.
+    atexit.register(meter_provider.shutdown)
+    atexit.register(tracer_provider.shutdown)
