@@ -12,6 +12,8 @@ from aws_client_impl import s3_client as s3_mod
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
+pytestmark = pytest.mark.unit
+
 
 def _client_error() -> ClientError:
     """Create a mock ClientError for testing."""
@@ -68,6 +70,38 @@ def test_upload_file_calls_singlepart_upload_when_small(
     assert isinstance(result, ObjectInfo)
     assert result.object_name == "ok/key"
     fake_client.upload_file.assert_called_once_with("local.txt", "my-bucket", "ok/key")
+
+
+def test_upload_file_includes_sse_kms_extra_args(
+    mocker: "MockerFixture",
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured KMS keys should be enforced on single-part uploads."""
+    monkeypatch.setenv("NIMBUS_S3_KMS_KEY_ID", "arn:aws:kms:us-east-1:123:key/abc")
+    fake_session = mocker.Mock()
+    fake_client = mocker.Mock()
+    fake_session.client.return_value = fake_client
+    mocker.patch.object(S3Client, "_get_session", return_value=fake_session)
+    fake_stat = mocker.Mock()
+    fake_stat.st_size = s3_mod.MULTIPART_THRESHOLD - 1
+    mocker.patch("aws_client_impl.s3_client.Path.stat", return_value=fake_stat)
+    mocker.patch.object(
+        S3Client, "_head_object_info", return_value=_stub_object_info("k")
+    )
+
+    S3Client().upload_file(
+        container="my-bucket", local_path="local.txt", remote_path="k"
+    )
+
+    fake_client.upload_file.assert_called_once_with(
+        "local.txt",
+        "my-bucket",
+        "k",
+        ExtraArgs={
+            "ServerSideEncryption": "aws:kms",
+            "SSEKMSKeyId": "arn:aws:kms:us-east-1:123:key/abc",
+        },
+    )
 
 
 def test_upload_file_calls_multipart_upload_when_large(

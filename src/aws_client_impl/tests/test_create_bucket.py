@@ -2,11 +2,14 @@
 
 from typing import TYPE_CHECKING
 
+import pytest
 from aws_client_impl.s3_client import S3Client
 from botocore.exceptions import ClientError
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
+
+pytestmark = pytest.mark.unit
 
 
 def _client_error() -> ClientError:

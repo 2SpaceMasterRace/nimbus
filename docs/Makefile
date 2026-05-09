@@ -1,8 +1,12 @@
 # Minimal makefile for Sphinx documentation
 #
-.PHONY: serve
+.PHONY: serve fresh-html
 serve:
 	uv run --group docs sphinx-autobuild "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS)
+
+fresh-html:
+	$(SPHINXBUILD) -M clean "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+	$(SPHINXBUILD) -E -a "$(SOURCEDIR)" "$(BUILDDIR)/html" $(SPHINXOPTS) $(O)
 
 # You can set these variables from the command line, and also
 # from the environment for the first two.
@@ -21,4 +25,3 @@ help:
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
 %: Makefile
 	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
-

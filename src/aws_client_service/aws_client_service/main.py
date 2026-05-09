@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hmac
 import os
+import secrets
 import tempfile
 from datetime import (
     datetime,  # noqa: TC003  # Pydantic models need datetime at runtime for schema generation
@@ -11,6 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Annotated, Any
 
 import structlog
+from ai_server.router import readiness_failures as ai_readiness_failures
+from ai_server.router import router as ai_router
 from cloud_storage_api import (
     AuthenticationError,
     CloudStorageClient,
@@ -22,15 +26,28 @@ from cloud_storage_api import (
     StorageBackendError,
 )
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile
+from fastapi import (
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+    status,
+)
 from fastapi import Path as ApiPath
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, ORJSONResponse
+from nimbus_runtime.observability import configure_observability
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.staticfiles import StaticFiles
 
-from aws_client_service.deps import require_oauth_session
+from aws_client_service.deps import (
+    require_oauth_session,
+    require_storage_mutation_admin,
+)
 from aws_client_service.routes.auth import router as auth_router
 
 load_dotenv(Path(__file__).resolve().parents[3] / ".env")
@@ -39,15 +56,22 @@ from aws_client_impl.s3_client import get_client_impl  # noqa: E402, I001  # env
 
 log: Any = structlog.get_logger()
 
-app = FastAPI(title="AWS S3 Cloud Storage Service", version="0.1.0")
+app = FastAPI(
+    title="AWS S3 Cloud Storage Service",
+    version="0.1.0",
+    default_response_class=ORJSONResponse,
+)
+configure_observability("nimbus-api", app=app)
 SPHINX_HTML_DIR = Path(__file__).resolve().parents[3] / "docs" / "build" / "html"
 
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.environ["SESSION_SECRET_KEY"],
+    secret_key=os.environ.get("SESSION_SECRET_KEY", "").strip()
+    or secrets.token_urlsafe(32),
 )
 
 app.include_router(auth_router)
+app.include_router(ai_router, prefix="/ai")
 
 if SPHINX_HTML_DIR.exists():
     app.mount(
@@ -55,6 +79,31 @@ if SPHINX_HTML_DIR.exists():
         StaticFiles(directory=SPHINX_HTML_DIR, html=True),
         name="sphinx-guide",
     )
+
+
+def _truthy(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _production_environment() -> bool:
+    env = (
+        os.environ.get("NIMBUS_ENV")
+        or os.environ.get("ENVIRONMENT")
+        or os.environ.get("APP_ENV")
+        or ""
+    )
+    return env.strip().lower() in {"prod", "production"}
+
+
+def _raw_mutations_enabled() -> bool:
+    configured = os.environ.get("NIMBUS_RAW_STORAGE_MUTATIONS_ENABLED")
+    if configured is not None:
+        return _truthy(configured)
+    return not _production_environment()
+
+
+def _debug_routes_enabled() -> bool:
+    return _truthy(os.environ.get("NIMBUS_ENABLE_DEBUG_ROUTES"))
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +159,75 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/ready")
+async def ready() -> dict[str, object]:
+    """Readiness probe for Render health-gated deployments."""
+    failures = [
+        f"missing env var: {name}"
+        for name in ("SESSION_SECRET_KEY", "API_KEY")
+        if not os.environ.get(name, "").strip()
+    ]
+    failures.extend(ai_readiness_failures())
+    if _production_environment():
+        if not os.environ.get("AI_SERVER_SIGNING_SECRET", "").strip():
+            failures.append("missing env var: AI_SERVER_SIGNING_SECRET")
+        if (
+            _raw_mutations_enabled()
+            and not os.environ.get("NIMBUS_RAW_STORAGE_ADMIN_KEY", "").strip()
+        ):
+            failures.append(
+                "missing env var: NIMBUS_RAW_STORAGE_ADMIN_KEY "
+                "while raw storage mutations are enabled"
+            )
+        if not os.environ.get("NIMBUS_S3_KMS_KEY_ID", "").strip():
+            failures.append("missing env var: NIMBUS_S3_KMS_KEY_ID")
+    if failures:
+        log.warning("readiness_check_failed", failures=failures)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"status": "not_ready", "failures": failures},
+        )
+    return {"status": "ready", "service": "aws-client-service"}
+
+
+@app.get("/sentry-debug")
+async def trigger_error(
+    request: Request,
+    x_storage_admin_key: Annotated[
+        str | None,
+        Header(alias="X-Nimbus-Storage-Admin-Key"),
+    ] = None,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    authorization: Annotated[str | None, Header()] = None,
+) -> None:
+    """Raise a deliberate exception to verify Sentry reporting."""
+    if not _debug_routes_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    expected_admin_key = os.environ.get("NIMBUS_RAW_STORAGE_ADMIN_KEY", "").strip()
+    if expected_admin_key:
+        if x_storage_admin_key is None or not hmac.compare_digest(
+            x_storage_admin_key,
+            expected_admin_key,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Debug route admin key is required.",
+            )
+    elif _production_environment():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="NIMBUS_RAW_STORAGE_ADMIN_KEY is required for debug routes.",
+        )
+    else:
+        require_oauth_session(
+            request,
+            x_api_key=x_api_key,
+            authorization=authorization,
+        )
+    msg = "Intentional Sentry debug exception."
+    raise RuntimeError(msg)
+
+
 @app.get("/")
 async def root() -> dict[str, str]:
     """Root endpoint."""
@@ -121,7 +239,7 @@ def upload_object(
     container: Annotated[str, ApiPath(min_length=3, max_length=63)],
     object_name: Annotated[str, ApiPath(min_length=1, max_length=1024)],
     file: UploadFile,
-    _: Annotated[str, Depends(require_oauth_session)],
+    _: Annotated[str, Depends(require_storage_mutation_admin)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> ObjectInfoResponse:
     """Upload an object to a bucket (container).
@@ -243,7 +361,7 @@ def download_file(
 def delete_object(
     container: Annotated[str, ApiPath(min_length=3, max_length=63)],
     object_name: Annotated[str, ApiPath(min_length=1, max_length=1024)],
-    _: Annotated[str, Depends(require_oauth_session)],
+    _: Annotated[str, Depends(require_storage_mutation_admin)],
     client: Annotated[CloudStorageClient, Depends(get_storage_client)],
 ) -> DeleteResultResponse:
     """Delete an object from a bucket (container).
@@ -307,7 +425,7 @@ def list_files(
         A list of object metadata entries.
 
     Raises:
-        HTTPException: 400 if the container name is invalid.
+        HTTPException: 400 if the container name or prefix is invalid.
         HTTPException: 401 if credentials are rejected.
         HTTPException: 404 if the container does not exist.
         HTTPException: 502 if the storage backend fails.
@@ -315,7 +433,7 @@ def list_files(
     """
     try:
         items = client.list_files(container, prefix)
-    except InvalidContainerError as exc:
+    except (InvalidContainerError, InvalidObjectNameError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ContainerNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

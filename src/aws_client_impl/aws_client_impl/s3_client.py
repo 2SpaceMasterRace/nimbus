@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, BinaryIO
 
 import boto3
 import structlog
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from cloud_storage_api import (
     AuthenticationError,
@@ -26,8 +28,47 @@ from cloud_storage_api import (
 # Constants
 MULTIPART_THRESHOLD = 100 * 1024 * 1024
 MAX_LIMIT = 10000
+_MAX_OBJECT_KEY_BYTES = 1024
+_ASCII_CONTROL_MAX = 32
+_ASCII_DELETE = 127
+_S3_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
 
 log: Any = structlog.get_logger()
+
+# Reused across all boto3 client instances to keep TLS alive and use adaptive
+# throttling.  max_pool_connections=4 is enough for the Render free-tier dyno
+# (0.1 vCPU; more connections would queue in userspace anyway).
+_S3_CONFIG = Config(
+    max_pool_connections=4,
+    tcp_keepalive=True,
+    retries={"mode": "adaptive", "max_attempts": 10},
+)
+
+
+def _parse_content_range_total(content_range: str) -> int:
+    """Parse the total object size from an S3 Content-Range response header.
+
+    Format: ``bytes start-end/total`` (e.g. ``bytes 0-65535/1048576``).
+    Returns 0 when the header is absent or unparseable.
+    """
+    try:
+        return int(content_range.split("/", 1)[1])
+    except (IndexError, ValueError):
+        return 0
+
+
+def _truthy(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _production_environment() -> bool:
+    env = (
+        os.environ.get("NIMBUS_ENV")
+        or os.environ.get("ENVIRONMENT")
+        or os.environ.get("APP_ENV")
+        or ""
+    )
+    return env.strip().lower() in {"prod", "production"}
 
 
 class S3Client(CloudStorageClient):
@@ -38,7 +79,14 @@ class S3Client(CloudStorageClient):
     with respect to AWS credentials and network access.
     """
 
-    def __init__(self, region_name: str = "us-east-1") -> None:
+    def __init__(
+        self,
+        region_name: str = "us-east-1",
+        *,
+        aws_access_key_id: str | None = None,
+        aws_secret_access_key: str | None = None,
+        aws_session_token: str | None = None,
+    ) -> None:
         """Initialize S3Client with the AWS region.
 
         No network calls are made here. The boto3 session and S3 client are
@@ -47,23 +95,61 @@ class S3Client(CloudStorageClient):
 
         Args:
             region_name: AWS region name. Defaults to 'us-east-1'.
+            aws_access_key_id: Optional explicit access key for tenant-scoped
+                clients. When omitted, boto3 uses its normal provider chain.
+            aws_secret_access_key: Optional explicit secret key for
+                tenant-scoped clients.
+            aws_session_token: Optional explicit session token for temporary
+                credentials.
 
         """
         self._region_name = region_name
+        self._aws_access_key_id = aws_access_key_id
+        self._aws_secret_access_key = aws_secret_access_key
+        self._aws_session_token = aws_session_token
+        # Cached boto3 objects — created once, reused for every API call so
+        # TLS sessions and connection pools survive across requests.
+        self._cached_session: boto3.Session | None = None
+        self._cached_client: Any = None
+        self._cached_resource: Any = None
+
+    def _sse_kms_extra_args(self) -> dict[str, str]:
+        key_id = os.environ.get("NIMBUS_S3_KMS_KEY_ID", "").strip()
+        if key_id:
+            return {
+                "ServerSideEncryption": "aws:kms",
+                "SSEKMSKeyId": key_id,
+            }
+        if _truthy(os.environ.get("NIMBUS_S3_SSE_KMS_REQUIRED")) or (
+            _production_environment()
+        ):
+            msg = "NIMBUS_S3_KMS_KEY_ID is required for S3 writes in production."
+            raise StorageBackendError(msg)
+        return {}
 
     @property
-    def _s3_client(self) -> Any:  # noqa: ANN401  # boto3.Session.client() has no precise stub; the return type is a dynamic ServiceClient with no public type annotation
-        """Boto3 low-level S3 client for the configured region."""
-        return self._get_session().client("s3")
+    def _s3_client(self) -> Any:  # noqa: ANN401
+        """Boto3 low-level S3 client, created once and reused for all calls.
+
+        Caching avoids a new TLS handshake on every API call, which at
+        0.1 vCPU would cost ~20 ms of wall-clock time per operation.
+        """
+        if self._cached_client is None:
+            self._cached_client = self._get_session().client("s3", config=_S3_CONFIG)
+        return self._cached_client
 
     @property
-    def _s3_resource(self) -> Any:  # noqa: ANN401  # boto3.resource() returns a dynamically generated ServiceResource with no public type annotation
-        """Lazy boto3 S3 resource, initialised on first access.
+    def _s3_resource(self) -> Any:  # noqa: ANN401
+        """Boto3 S3 resource, created once and reused.
 
         Reference: https://docs.aws.amazon.com/boto3/latest/reference/
         services/s3/service-resource/create_bucket.html
         """
-        return self._get_session().resource("s3")  # pragma: no cover
+        if self._cached_resource is None:  # pragma: no cover
+            self._cached_resource = (  # pragma: no cover
+                self._get_session().resource("s3")
+            )
+        return self._cached_resource  # pragma: no cover
 
     def upload_file(
         self, container: str, local_path: str, remote_path: str
@@ -84,8 +170,7 @@ class S3Client(CloudStorageClient):
 
         Raises:
             InvalidContainerError: If container is empty or otherwise invalid.
-            InvalidObjectNameError: If remote_path is empty or starts with a
-                leading slash.
+            InvalidObjectNameError: If remote_path is empty or starts with a slash.
             LocalFileAccessError: If local_path cannot be read.
             StorageBackendError: If the upload fails due to AWS service errors.
 
@@ -97,7 +182,16 @@ class S3Client(CloudStorageClient):
             if file_size > MULTIPART_THRESHOLD:
                 return self._multipart_upload_file(container, local_path, remote_path)
             log.info("Commencing file upload...")
-            self._s3_client.upload_file(local_path, container, remote_path)
+            extra_args = self._sse_kms_extra_args()
+            if extra_args:
+                self._s3_client.upload_file(
+                    local_path,
+                    container,
+                    remote_path,
+                    ExtraArgs=extra_args,
+                )
+            else:
+                self._s3_client.upload_file(local_path, container, remote_path)
             log.info("File uploaded successfully")
         except ClientError as exc:
             log.exception("Failed to upload", container=container, key=remote_path)
@@ -151,7 +245,16 @@ class S3Client(CloudStorageClient):
 
         try:
             log.info("Commencing object upload...")
-            self._s3_client.upload_fileobj(file_obj, container, remote_path)
+            extra_args = self._sse_kms_extra_args()
+            if extra_args:
+                self._s3_client.upload_fileobj(
+                    file_obj,
+                    container,
+                    remote_path,
+                    ExtraArgs=extra_args,
+                )
+            else:
+                self._s3_client.upload_fileobj(file_obj, container, remote_path)
         except ClientError as exc:
             log.exception(
                 "Failed to upload object", container=container, key=remote_path
@@ -200,18 +303,26 @@ class S3Client(CloudStorageClient):
                         },
                     )
                     part_number += 1
-        except ClientError:  # pragma: no cover
+        except Exception:
             log.exception(
                 "Multipart upload failed, aborting...",
                 container=container,
                 key=key,
                 upload_id=upload_id,
             )
-            self.abort_multipart_upload(
-                container=container,
-                key=key,
-                upload_id=upload_id,
-            )
+            try:
+                self.abort_multipart_upload(
+                    container=container,
+                    key=key,
+                    upload_id=upload_id,
+                )
+            except Exception:
+                log.exception(
+                    "Failed to abort multipart upload",
+                    container=container,
+                    key=key,
+                    upload_id=upload_id,
+                )
             raise
 
         self.complete_multipart_upload(
@@ -260,18 +371,26 @@ class S3Client(CloudStorageClient):
                     },
                 )
                 part_number += 1
-        except ClientError:
+        except Exception:
             log.exception(
                 "Multipart upload failed, aborting...",
                 container=container,
                 key=key,
                 upload_id=upload_id,
             )
-            self.abort_multipart_upload(
-                container=container,
-                key=key,
-                upload_id=upload_id,
-            )
+            try:
+                self.abort_multipart_upload(
+                    container=container,
+                    key=key,
+                    upload_id=upload_id,
+                )
+            except Exception:
+                log.exception(
+                    "Failed to abort multipart upload",
+                    container=container,
+                    key=key,
+                    upload_id=upload_id,
+                )
             raise
 
         self.complete_multipart_upload(
@@ -519,6 +638,11 @@ class S3Client(CloudStorageClient):
         self._validate_container_name(container)
         self._validate_object_name(object_name)
         try:
+            # Existence check before delete: HEAD costs 1 GET from the monthly
+            # budget and S3's DeleteObject is idempotent (returns 204 whether or
+            # not the object existed). We do the HEAD here to honour the
+            # CloudStorageClient contract that ObjectNotFoundError is raised for
+            # missing keys, which callers depend on.
             self._s3_client.head_object(Bucket=container, Key=object_name)
             log.info("Deleting S3 Object...")
             resp: dict[str, Any] = self._s3_client.delete_object(
@@ -572,10 +696,219 @@ class S3Client(CloudStorageClient):
                 exc, container=container, key=object_name
             ) from exc
 
+    def get_object_range(
+        self, container: str, key: str, start: int, end: int
+    ) -> tuple[bytes, int]:
+        """Download a byte range from an S3 object without touching disk.
+
+        Issues a single ``GetObject`` with an HTTP ``Range`` header so only
+        the requested bytes are transferred. Returns ``(content, total_size)``
+        where ``total_size`` is the full object size parsed from the
+        ``Content-Range`` response header — no separate ``HeadObject`` call
+        required. Returns ``total_size=0`` when the header is absent (only
+        possible if the range covers the entire object and S3 elides it).
+
+        Args:
+            container: Bucket name.
+            key: Object key.
+            start: First byte offset, inclusive (0-based).
+            end: Last byte offset, inclusive.
+
+        Raises:
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If key is invalid.
+            ObjectNotFoundError: If the object does not exist.
+            StorageBackendError: On other AWS failures.
+
+        """
+        self._validate_container_name(container)
+        self._validate_object_name(key)
+        try:
+            resp: dict[str, Any] = self._s3_client.get_object(
+                Bucket=container,
+                Key=key,
+                Range=f"bytes={start}-{end}",
+            )
+            content: bytes = resp["Body"].read()
+            total = _parse_content_range_total(resp.get("ContentRange", ""))
+        except ClientError as exc:
+            log.exception(
+                "Failed range read", container=container, key=key, start=start, end=end
+            )
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
+        return content, total
+
+    def read_object(self, container: str, key: str) -> bytes:
+        """Read an entire S3 object into memory without touching disk.
+
+        For objects up to ``_WRITE_FILE_MAX_BYTES`` (10 MB) this is
+        preferable to ``download_file`` because it skips the tempfile
+        round-trip: no ``open``, ``write``, ``fsync``, or ``unlink``
+        syscalls, and no disk-pressure risk on the 512 MB Render dyno.
+
+        Args:
+            container: Bucket name.
+            key: Object key.
+
+        Raises:
+            InvalidContainerError: If container is invalid.
+            InvalidObjectNameError: If key is invalid.
+            ObjectNotFoundError: If the object does not exist.
+            StorageBackendError: On other AWS failures.
+
+        """
+        self._validate_container_name(container)
+        self._validate_object_name(key)
+        try:
+            resp: dict[str, Any] = self._s3_client.get_object(Bucket=container, Key=key)
+            return resp["Body"].read()  # type: ignore[no-any-return]
+        except ClientError as exc:
+            log.exception("Failed object read", container=container, key=key)
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
+
+    def copy_object(
+        self,
+        src_container: str,
+        src_key: str,
+        dst_container: str,
+        dst_key: str,
+    ) -> ObjectInfo:
+        """Server-side S3 copy: zero bytes transit this process or the network.
+
+        S3 copies the object internally.  The destination inherits the
+        bucket's default encryption so no KMS HEAD is needed for the
+        ≤ 10 MB tool-layer files.  For large objects handled by the admin
+        CLI, use ``_server_side_rename`` in ``storage_admin`` instead —
+        that path does the HEAD + multipart logic.
+
+        Raises:
+            ObjectNotFoundError: If the source does not exist.
+            StorageBackendError: On other AWS failures.
+
+        """
+        self._validate_container_name(src_container)
+        self._validate_object_name(src_key)
+        self._validate_container_name(dst_container)
+        self._validate_object_name(dst_key)
+        try:
+            resp: dict[str, Any] = self._s3_client.copy_object(
+                Bucket=dst_container,
+                Key=dst_key,
+                CopySource={"Bucket": src_container, "Key": src_key},
+                MetadataDirective="COPY",
+                **self._sse_kms_extra_args(),
+            )
+        except ClientError as exc:
+            raise self._translate_client_error(
+                exc, container=src_container, key=src_key
+            ) from exc
+        copy_result = resp.get("CopyObjectResult") or {}
+        return ObjectInfo(
+            object_name=dst_key,
+            integrity=copy_result.get("ETag"),
+            updated_at=copy_result.get("LastModified"),
+        )
+
+    def list_files_page(
+        self,
+        container: str,
+        prefix: str,
+        max_keys: int,
+        continuation_token: str = "",
+    ) -> tuple[list[ObjectInfo], str]:
+        """Fetch a single page of at most ``max_keys`` objects.
+
+        Returns ``(items, next_token)`` where ``next_token`` is an empty
+        string when no further pages exist.  This avoids exhausting the
+        full paginator (which burns one LIST request per 1 000 objects)
+        when the caller only needs the first N results.
+
+        Raises:
+            InvalidContainerError: If container is invalid.
+            StorageBackendError: On other AWS failures.
+
+        """
+        self._validate_container_name(container)
+        kwargs: dict[str, Any] = {
+            "Bucket": container,
+            "Prefix": prefix,
+            "MaxKeys": max_keys,
+        }
+        if continuation_token:
+            kwargs["ContinuationToken"] = continuation_token
+        try:
+            resp: dict[str, Any] = self._s3_client.list_objects_v2(**kwargs)
+        except ClientError as exc:
+            raise self._translate_client_error(exc, container=container) from exc
+        items = [
+            ObjectInfo(
+                object_name=obj["Key"],
+                size_bytes=obj.get("Size"),
+                updated_at=obj.get("LastModified"),
+                integrity=obj.get("ETag"),
+                storage_tier=obj.get("StorageClass"),
+            )
+            for obj in resp.get("Contents", [])
+        ]
+        next_token: str = resp.get("NextContinuationToken", "")
+        return items, next_token
+
+    def force_delete(self, container: str, key: str) -> DeleteResult:
+        """Delete an object without a pre-flight HEAD existence check.
+
+        Use only when the caller has already confirmed the object exists
+        (e.g. immediately after a successful copy in ``move_file``).
+        Saves one GET from the monthly free-tier budget compared to the
+        full ``delete_file`` path which HEADs first to honour the
+        ``ObjectNotFoundError`` contract.
+
+        Raises:
+            StorageBackendError: If the delete request itself fails.
+
+        """
+        self._validate_container_name(container)
+        self._validate_object_name(key)
+        try:
+            resp: dict[str, Any] = self._s3_client.delete_object(
+                Bucket=container, Key=key
+            )
+        except ClientError as exc:
+            raise self._translate_client_error(
+                exc, container=container, key=key
+            ) from exc
+        return DeleteResult(
+            deleted=True,
+            version_id=resp.get("VersionId"),
+            request_charged=resp.get("RequestCharged") == "requester",
+        )
+
     # Helpers
     def _get_session(self) -> boto3.Session:
-        """Create and return a boto3 Session for the configured region."""
-        return boto3.Session(region_name=self._region_name)
+        """Return the shared boto3 Session, creating it on first call.
+
+        Caching the session means both ``_s3_client`` and ``_s3_resource``
+        share one credential chain resolution rather than each walking the
+        provider chain independently.
+        """
+        if self._cached_session is None:
+            if (
+                self._aws_access_key_id is None
+                and self._aws_secret_access_key is None
+                and self._aws_session_token is None
+            ):
+                self._cached_session = boto3.Session(region_name=self._region_name)
+            else:
+                self._cached_session = boto3.Session(
+                    region_name=self._region_name,
+                    aws_access_key_id=self._aws_access_key_id,
+                    aws_secret_access_key=self._aws_secret_access_key,
+                    aws_session_token=self._aws_session_token,
+                )
+        return self._cached_session
 
     def get_session(self) -> boto3.Session:  # pragma: no cover
         """Return a boto3 Session for the configured region."""
@@ -660,6 +993,7 @@ class S3Client(CloudStorageClient):
             "Bucket": container,
             "Key": key,
         }
+        kwargs.update(self._sse_kms_extra_args())
         try:
             log.info("Initializing Multipart Upload...")
             response: dict[str, Any] = self._s3_client.create_multipart_upload(**kwargs)
@@ -837,8 +1171,14 @@ class S3Client(CloudStorageClient):
 
     def _validate_container_name(self, container: str) -> None:
         """Validate a container / bucket name before calling S3."""
-        if not container:
-            msg = "Container cannot be empty"
+        if (
+            not container
+            or not _S3_BUCKET_RE.fullmatch(container)
+            or ".." in container
+            or ".-" in container
+            or "-." in container
+        ):
+            msg = "Container must be a valid S3 bucket name"
             log.error(msg)
             raise InvalidContainerError(msg)
 
@@ -850,6 +1190,20 @@ class S3Client(CloudStorageClient):
             raise InvalidObjectNameError(msg)
         if key.startswith("/"):
             msg = "S3 object key cannot start with a leading slash"
+            log.error(msg)
+            raise InvalidObjectNameError(msg)
+        if len(key.encode("utf-8")) > _MAX_OBJECT_KEY_BYTES:
+            msg = "S3 object key cannot exceed 1024 UTF-8 bytes"
+            log.error(msg)
+            raise InvalidObjectNameError(msg)
+        if any(
+            ord(char) < _ASCII_CONTROL_MAX or ord(char) == _ASCII_DELETE for char in key
+        ):
+            msg = "S3 object key cannot contain control characters"
+            log.error(msg)
+            raise InvalidObjectNameError(msg)
+        if any(segment == ".." for segment in key.split("/")):
+            msg = "S3 object key cannot contain parent-directory segments"
             log.error(msg)
             raise InvalidObjectNameError(msg)
 

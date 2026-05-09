@@ -11,6 +11,8 @@ from cloud_storage_api import ObjectInfo
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
+pytestmark = pytest.mark.unit
+
 
 def _client_error() -> ClientError:
     """Create a mock ClientError for testing."""
@@ -49,7 +51,9 @@ def test_multipart_upload_file_completes_on_success(
     expected = _stub_object_info("k")
     mocker.patch.object(S3Client, "_head_object_info", return_value=expected)
 
-    result = c._multipart_upload_file(container="my-bucket", local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
+    result = c._multipart_upload_file(
+        container="my-bucket", local_path=str(p), key="k"
+    )  # accessing private method directly to unit-test chunked upload logic
 
     assert isinstance(result, ObjectInfo)
     assert result.object_name == "k"
@@ -83,7 +87,35 @@ def test_multipart_upload_file_aborts_on_part_failure(
     abort = mocker.patch.object(c, "abort_multipart_upload", return_value=True)
 
     with pytest.raises(ClientError):
-        c._multipart_upload_file(container="my-bucket", local_path=str(p), key="k")  # noqa: SLF001  # accessing private method directly to unit-test chunked upload logic
+        c._multipart_upload_file(
+            container="my-bucket", local_path=str(p), key="k"
+        )  # accessing private method directly to unit-test chunked upload logic
+
+    abort.assert_called_once_with(container="my-bucket", key="k", upload_id="u1")
+    complete.assert_not_called()
+
+
+def test_multipart_upload_obj_aborts_on_stream_read_failure(
+    mocker: "MockerFixture",
+) -> None:
+    """Object multipart uploads should abort when local stream reads fail."""
+    c = S3Client()
+
+    class FailingStream:
+        def read(self, _size: int = -1) -> bytes:
+            message = "stream read failed"
+            raise OSError(message)
+
+    mocker.patch.object(c, "create_multipart_upload", return_value={"UploadId": "u1"})
+    complete = mocker.patch.object(c, "complete_multipart_upload", return_value=True)
+    abort = mocker.patch.object(c, "abort_multipart_upload", return_value=True)
+
+    with pytest.raises(OSError, match="stream read failed"):
+        c._multipart_upload_obj(
+            container="my-bucket",
+            file_obj=FailingStream(),  # type: ignore[arg-type]
+            key="k",
+        )
 
     abort.assert_called_once_with(container="my-bucket", key="k", upload_id="u1")
     complete.assert_not_called()

@@ -11,6 +11,8 @@ from cloud_storage_api import ObjectInfo, StorageBackendError
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
+pytestmark = pytest.mark.unit
+
 
 def _client_error() -> ClientError:
     """Create a mock ClientError for testing."""
@@ -73,6 +75,31 @@ def test_upload_obj_calls_singlepart_upload_when_small(
     assert args[2] == "k"
 
 
+def test_upload_obj_includes_sse_kms_extra_args(
+    mocker: "MockerFixture",
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Configured KMS keys should be enforced on file-like uploads."""
+    monkeypatch.setenv("NIMBUS_S3_KMS_KEY_ID", "kms-key-1")
+    fake_session = mocker.Mock()
+    fake_client = mocker.Mock()
+    fake_session.client.return_value = fake_client
+    mocker.patch.object(S3Client, "_get_session", return_value=fake_session)
+    mocker.patch("aws_client_impl.s3_client.MULTIPART_THRESHOLD", 10_000_000)
+    mocker.patch.object(
+        S3Client, "_head_object_info", return_value=_stub_object_info("k")
+    )
+
+    S3Client().upload_obj(
+        container="my-bucket", file_obj=io.BytesIO(b"hi"), remote_path="k"
+    )
+
+    assert fake_client.upload_fileobj.call_args.kwargs["ExtraArgs"] == {
+        "ServerSideEncryption": "aws:kms",
+        "SSEKMSKeyId": "kms-key-1",
+    }
+
+
 def test_upload_obj_calls_multipart_when_unseekable(
     mocker: "MockerFixture",
 ) -> None:
@@ -86,7 +113,8 @@ def test_upload_obj_calls_multipart_when_unseekable(
         def readable(self) -> bool:
             return True
 
-        def read(self, n: int = -1) -> bytes:  # noqa: ARG002  # n is required by BinaryIO.read() protocol but intentionally unused in this stub
+        # n is part of the BinaryIO.read() signature; unused in this stub.
+        def read(self, n: int = -1) -> bytes:
             return b""  # no content needed for this unit test
 
         def seekable(self) -> bool:

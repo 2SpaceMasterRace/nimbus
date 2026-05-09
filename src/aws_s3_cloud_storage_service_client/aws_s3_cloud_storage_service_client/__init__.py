@@ -1,8 +1,6 @@
-"""A client library for accessing AWS S3 Cloud Storage Service"""
+"""A client library for accessing AWS S3 Cloud Storage Service."""
 
-from .client import AuthenticatedClient, Client
-
-__all__ = (
-    "AuthenticatedClient",
-    "Client",
+from aws_s3_cloud_storage_service_client.client import (
+    AuthenticatedClient as AuthenticatedClient,
 )
+from aws_s3_cloud_storage_service_client.client import Client as Client

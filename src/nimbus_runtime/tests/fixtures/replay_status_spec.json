@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "statuses": {
+    "action": [
+      "proposed",
+      "awaiting_confirmation",
+      "authorized",
+      "queued",
+      "executing",
+      "verifying",
+      "succeeded",
+      "failed_retryable",
+      "failed_terminal",
+      "expired",
+      "cancelled"
+    ],
+    "approval": [
+      "pending",
+      "approved",
+      "rejected",
+      "expired"
+    ],
+    "generation": [
+      "complete",
+      "partial",
+      "failed"
+    ],
+    "stack": [
+      "proposed",
+      "approved",
+      "applied",
+      "abandoned",
+      "conflicted",
+      "failed"
+    ]
+  }
+}

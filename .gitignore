@@ -41,6 +41,7 @@ htmlcov/
 .ruff_cache/
 
 # IDE / editors
+.claude/
 .idea/
 .vscode/
 *.swp
@@ -64,6 +65,11 @@ credentials.env
 # Logs
 *.log
 
+# Local Nimbus runtime and generated helper output
+.nimbus-dev/
+build/openapi/
+.claude/worktrees/
+
 # Local curl-test harness storage
 .curl-test-storage/
 
@@ -76,3 +82,11 @@ Homework*.txt
 OSPSD Spring*.txt
 session-prompt.md
 plans.md
+
+# Course materials directory (local only)
+Homeworks/
+Books/
+
+# IaC state file — contains resource IDs; never commit
+infra/.infra_state.json
+.nimbus-bucket-mapping.toml

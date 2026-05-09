@@ -10,6 +10,8 @@ from cloud_storage_api import StorageBackendError
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
 
+pytestmark = pytest.mark.unit
+
 
 def _client_error() -> ClientError:
     """Create a mock ClientError for testing."""
@@ -62,6 +64,26 @@ def test_create_multipart_upload_returns_response_on_success(
     fake_boto_client.create_multipart_upload.assert_called_once_with(
         Bucket="my-bucket",
         Key="k",
+    )
+
+
+def test_create_multipart_upload_includes_sse_kms(
+    mocker: "MockerFixture",
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Multipart uploads should set KMS encryption at initiation time."""
+    monkeypatch.setenv("NIMBUS_S3_KMS_KEY_ID", "kms-key-1")
+    fake_boto_client = mocker.Mock()
+    fake_boto_client.create_multipart_upload.return_value = {"UploadId": "u1"}
+    c = _make_client(mocker, fake_boto_client)
+
+    c.create_multipart_upload(container="my-bucket", key="k")
+
+    fake_boto_client.create_multipart_upload.assert_called_once_with(
+        Bucket="my-bucket",
+        Key="k",
+        ServerSideEncryption="aws:kms",
+        SSEKMSKeyId="kms-key-1",
     )
 
 

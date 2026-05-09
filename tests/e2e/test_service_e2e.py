@@ -1,8 +1,4 @@
-"""End-to-End tests for the FastAPI service.
-
-This module tests the aws_client_service FastAPI application, verifying
-file structure, module imports, and endpoint behaviour.
-"""
+"""End-to-end tests for the FastAPI storage service."""
 
 import os
 import subprocess
@@ -10,14 +6,17 @@ import sys
 from pathlib import Path
 
 import pytest
-from aws_client_service.main import app
+from aws_client_service.deps import require_oauth_session
+from aws_client_service.main import app, get_storage_client
 from fastapi.testclient import TestClient
+from test_support.storage_fakes import FileBackedStorageClient
 
 pytestmark = pytest.mark.e2e
 
 _WORKSPACE_ROOT = Path(__file__).parent.parent.parent
 
 HTTP_OK = 200
+API_KEY = "service-e2e-api-key"
 
 
 def _subprocess_env() -> dict[str, str]:
@@ -73,6 +72,25 @@ def test_service_module_imports() -> None:
         pytest.fail(
             f"aws_client_service.main import failed:\n{e.stderr}",
         )
+
+
+@pytest.mark.circleci
+def test_service_module_imports_without_session_secret() -> None:
+    """Missing SESSION_SECRET_KEY is reported by readiness, not import startup."""
+    import_test_code = 'import aws_client_service.main; print("All imports successful")'
+    env = _subprocess_env()
+    env.pop("SESSION_SECRET_KEY", None)
+
+    result = subprocess.run(  # noqa: S603  # command list is constructed from trusted constants
+        [sys.executable, "-c", import_test_code],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+        env=env,
+    )
+
+    assert "All imports successful" in result.stdout
 
 
 @pytest.mark.circleci
@@ -163,3 +181,114 @@ def test_service_health_endpoint_e2e() -> None:
     response = client.get("/health")
     assert response.status_code == HTTP_OK
     assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.circleci
+def test_service_requires_auth_when_override_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Protected endpoints reject unauthenticated requests."""
+    monkeypatch.setenv("API_KEY", API_KEY)
+    app.dependency_overrides.pop(require_oauth_session, None)
+
+    try:
+        client = TestClient(app)
+        response = client.get("/files", params={"container": "demo-bucket"})
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Authentication required"}
+    finally:
+        app.dependency_overrides.pop(require_oauth_session, None)
+
+
+@pytest.mark.circleci
+def test_service_file_workflow_over_http_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real FastAPI app preserves storage workflow invariants end to end."""
+    monkeypatch.setenv("API_KEY", API_KEY)
+    app.dependency_overrides.pop(require_oauth_session, None)
+    app.dependency_overrides[get_storage_client] = lambda: FileBackedStorageClient(
+        tmp_path / "storage"
+    )
+
+    headers = {"X-API-Key": API_KEY}
+
+    try:
+        client = TestClient(app)
+
+        upload = client.post(
+            "/files/demo-bucket/reports/q1.txt",
+            files={"file": ("q1.txt", b"quarterly results", "text/plain")},
+            headers=headers,
+        )
+        assert upload.status_code == HTTP_OK
+        assert upload.json()["object_name"] == "reports/q1.txt"
+
+        listed = client.get(
+            "/files",
+            params={"container": "demo-bucket", "prefix": "reports/"},
+            headers=headers,
+        )
+        assert listed.status_code == HTTP_OK
+        assert listed.json() == [
+            {
+                "object_name": "reports/q1.txt",
+                "version_id": None,
+                "data_type": None,
+                "integrity": None,
+                "encryption": None,
+                "storage_tier": None,
+                "size_bytes": len(b"quarterly results"),
+                "updated_at": None,
+                "metadata": None,
+            }
+        ]
+
+        info = client.get(
+            "/files/demo-bucket/reports/q1.txt/info",
+            headers=headers,
+        )
+        assert info.status_code == HTTP_OK
+        assert info.json()["size_bytes"] == len(b"quarterly results")
+
+        download = client.get(
+            "/download",
+            params={"container": "demo-bucket", "object_name": "reports/q1.txt"},
+            headers=headers,
+        )
+        assert download.status_code == HTTP_OK
+        assert download.content == b"quarterly results"
+        assert download.headers["content-disposition"].endswith('filename="q1.txt"')
+
+        deleted = client.delete(
+            "/files/demo-bucket/reports/q1.txt",
+            headers=headers,
+        )
+        assert deleted.status_code == HTTP_OK
+        assert deleted.json() == {
+            "deleted": True,
+            "version_id": None,
+            "request_charged": None,
+        }
+
+        deleted_again = client.delete(
+            "/files/demo-bucket/reports/q1.txt",
+            headers=headers,
+        )
+        assert deleted_again.status_code == HTTP_OK
+        assert deleted_again.json() == {
+            "deleted": False,
+            "version_id": None,
+            "request_charged": None,
+        }
+
+        listed_after_delete = client.get(
+            "/files",
+            params={"container": "demo-bucket", "prefix": "reports/"},
+            headers=headers,
+        )
+        assert listed_after_delete.status_code == HTTP_OK
+        assert listed_after_delete.json() == []
+    finally:
+        app.dependency_overrides.clear()

@@ -5,6 +5,7 @@ Provides ``CloudStorageServiceAdapter``, which implements
 HTTP service client.
 """
 
-from aws_client_adapter.service_adapter import get_client_impl
-
-__all__ = ["get_client_impl"]
+from aws_client_adapter.service_adapter import (
+    CloudStorageServiceAdapter as CloudStorageServiceAdapter,
+)
+from aws_client_adapter.service_adapter import get_client_impl as get_client_impl

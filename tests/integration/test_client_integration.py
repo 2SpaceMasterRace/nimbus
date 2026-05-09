@@ -6,8 +6,9 @@ returns a concrete ``CloudStorageClient`` instance using the external
 """
 
 import pytest
-from aws_client_impl.s3_client import S3Client, get_client_impl
 from cloud_storage_api import CloudStorageClient
+
+from aws_client_impl import S3Client, get_client_impl
 
 pytestmark = pytest.mark.integration
 

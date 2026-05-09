@@ -1,14 +1,32 @@
 """Shared pytest configuration for repository-wide test setup."""
 
 import os
+import sys
 from collections.abc import Iterator
+from importlib import import_module
+from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("SESSION_SECRET_KEY", "test-session-secret-key")
+REPO_ROOT = Path(__file__).resolve().parent
+TESTS_ROOT = REPO_ROOT / "tests"
+if str(REPO_ROOT) not in sys.path:
+    # Keep repository-local test support imports stable under pytest's
+    # importlib mode during both focused and full-suite collection.
+    sys.path.insert(0, str(REPO_ROOT))
+if TESTS_ROOT.is_dir() and str(TESTS_ROOT) not in sys.path:
+    # `test_support` lives under `tests/` so cross-package tests can still
+    # `from test_support.storage_fakes import ...` regardless of where they run.
+    sys.path.insert(0, str(TESTS_ROOT))
 
-from aws_client_service.deps import require_oauth_session
-from aws_client_service.main import app
+os.environ.setdefault("SESSION_SECRET_KEY", "test-session-secret-key")
+os.environ.setdefault("NIMBUS_ENV", "")
+os.environ.setdefault("ENVIRONMENT", "test")
+os.environ.setdefault("APP_ENV", "test")
+os.environ.setdefault("NIMBUS_STATE_BACKEND", "file")
+
+require_oauth_session = import_module("aws_client_service.deps").require_oauth_session
+app = import_module("aws_client_service.main").app
 
 
 @pytest.fixture(autouse=True)
