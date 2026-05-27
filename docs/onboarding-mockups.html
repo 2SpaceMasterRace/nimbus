@@ -1,0 +1,959 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nimbus — Onboarding Themes</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Selector bar ─────────────────────────────────────── */
+    .picker {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 24px;
+      background: rgba(10,10,10,.92);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    .picker__label {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: #555;
+      margin-right: 6px;
+    }
+    .tab {
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: #666;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all .15s;
+    }
+    .tab:hover { color: #ccc; border-color: #333; }
+    .tab.active {
+      background: #fff;
+      color: #000;
+      border-color: #fff;
+    }
+
+    /* ── Frames ───────────────────────────────────────────── */
+    .frame { display: none; min-height: calc(100vh - 53px); }
+    .frame.active { display: block; }
+
+    /* ══════════════════════════════════════════════════════
+       THEME 1 — LINEAR
+       Desaturated indigo, dark, power-user density
+    ══════════════════════════════════════════════════════ */
+    .t-linear {
+      --bg:          #101012;
+      --surface:     #16161a;
+      --surface2:    #1e1e24;
+      --border:      #2a2a32;
+      --border2:     #38383f;
+      --ink:         #e8e8f0;
+      --ink2:        #a0a0b0;
+      --muted:       #606070;
+      --accent:      #5e6ad2;
+      --accent-h:    #4f5bc4;
+      --accent-glow: rgba(94,106,210,.18);
+      --danger:      #e55;
+      --radius:      7px;
+      --radius-sm:   5px;
+    }
+    .t-linear { background: var(--bg); color: var(--ink); font-size: 14px; line-height: 1.5; }
+
+    .t-linear .page {
+      min-height: calc(100vh - 53px);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 48px 20px 80px;
+    }
+    .t-linear .shell {
+      width: 100%;
+      max-width: 460px;
+      display: grid;
+      gap: 16px;
+    }
+
+    /* progress bar — Linear style: step X of Y */
+    .t-linear .progress {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 500;
+      letter-spacing: .04em;
+    }
+    .t-linear .progress__dots {
+      display: flex;
+      gap: 4px;
+    }
+    .t-linear .progress__dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--border2);
+    }
+    .t-linear .progress__dot.done { background: var(--accent); }
+    .t-linear .progress__dot.active {
+      background: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+
+    .t-linear .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 28px 24px;
+    }
+    .t-linear .brand {
+      width: 28px; height: 28px;
+      border-radius: 7px;
+      background: var(--accent);
+      margin-bottom: 20px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .t-linear .brand svg { color: #fff; }
+    .t-linear h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -.3px;
+      color: var(--ink);
+      margin-bottom: 4px;
+    }
+    .t-linear .sub {
+      font-size: 13px;
+      color: var(--ink2);
+      margin-bottom: 24px;
+    }
+    .t-linear .ws-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 9px;
+      border: 1px solid var(--border2);
+      border-radius: 999px;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: ui-monospace, monospace;
+      margin-bottom: 20px;
+    }
+    .t-linear .ws-pill span { color: var(--ink2); font-weight: 600; }
+    .t-linear .field { margin-bottom: 14px; }
+    .t-linear label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--ink2);
+      margin-bottom: 5px;
+      letter-spacing: .01em;
+    }
+    .t-linear input {
+      width: 100%;
+      height: 34px;
+      padding: 0 10px;
+      background: var(--bg);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-sm);
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      transition: border-color .1s, box-shadow .1s;
+    }
+    .t-linear input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-glow);
+    }
+    .t-linear .btn-primary {
+      width: 100%;
+      height: 34px;
+      background: var(--accent);
+      border: none;
+      border-radius: var(--radius-sm);
+      color: #fff;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-top: 20px;
+      transition: background .1s;
+    }
+    .t-linear .btn-primary:hover { background: var(--accent-h); }
+    .t-linear .meta {
+      margin-top: 16px;
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .t-linear .meta-item {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .t-linear .meta-dot {
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    /* ══════════════════════════════════════════════════════
+       THEME 2 — FIGMA
+       Blue + violet multi-hue, light background, energetic
+    ══════════════════════════════════════════════════════ */
+    .t-figma {
+      --bg:       #ffffff;
+      --surface:  #ffffff;
+      --border:   #e5e5e5;
+      --ink:      #1e1e1e;
+      --ink2:     #4a4a4a;
+      --muted:    #8a8a8a;
+      --accent:   #0d99ff;
+      --accent-h: #0080e0;
+      --violet:   #7b61ff;
+      --glow:     rgba(13,153,255,.12);
+      --radius:   8px;
+    }
+    .t-figma {
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .t-figma .page {
+      min-height: calc(100vh - 53px);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 56px 20px 80px;
+      background: linear-gradient(135deg, #f0f7ff 0%, #f5f0ff 50%, #fff5f0 100%);
+    }
+    .t-figma .shell {
+      width: 100%;
+      max-width: 480px;
+      display: grid;
+      gap: 20px;
+    }
+
+    /* progress: dot indicators */
+    .t-figma .progress {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .t-figma .progress__dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #ddd;
+    }
+    .t-figma .progress__dot.done { background: var(--accent); }
+    .t-figma .progress__dot.active {
+      width: 18px;
+      border-radius: 3px;
+      background: var(--accent);
+    }
+
+    .t-figma .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.06), 0 1px 4px rgba(0,0,0,.04);
+    }
+    .t-figma .brand {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--violet) 100%);
+      margin-bottom: 20px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .t-figma h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -.4px;
+      color: var(--ink);
+      margin-bottom: 6px;
+    }
+    .t-figma .sub {
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 24px;
+      line-height: 1.55;
+    }
+    .t-figma .ws-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px;
+      border: 1.5px solid #e0eeff;
+      border-radius: 999px;
+      background: #f0f7ff;
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+    .t-figma .field { margin-bottom: 16px; }
+    .t-figma label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink2);
+      margin-bottom: 6px;
+    }
+    .t-figma input {
+      width: 100%;
+      height: 40px;
+      padding: 0 12px;
+      background: #fafafa;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--ink);
+      font: inherit;
+      font-size: 14px;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .t-figma input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--glow);
+      background: #fff;
+    }
+    .t-figma .btn-primary {
+      width: 100%;
+      height: 40px;
+      background: var(--accent);
+      border: none;
+      border-radius: var(--radius);
+      color: #fff;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 20px;
+      transition: background .15s, box-shadow .15s;
+    }
+    .t-figma .btn-primary:hover {
+      background: var(--accent-h);
+      box-shadow: 0 4px 12px rgba(13,153,255,.3);
+    }
+    .t-figma .meta {
+      margin-top: 16px;
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .t-figma .meta-item {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .t-figma .meta-dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    /* ══════════════════════════════════════════════════════
+       THEME 3 — NOTION
+       Warm cream, monochrome, no color accent, ultra-minimal
+    ══════════════════════════════════════════════════════ */
+    .t-notion {
+      --bg:       #eeeae4;
+      --surface:  #f7f6f3;
+      --border:   #e0dbd4;
+      --ink:      #37352f;
+      --ink2:     #5a564e;
+      --muted:    #9b9790;
+      --accent:   #37352f;
+      --accent-h: #1a1916;
+      --radius:   6px;
+    }
+    .t-notion {
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .t-notion .page {
+      min-height: calc(100vh - 53px);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 56px 20px 80px;
+    }
+    .t-notion .shell {
+      width: 100%;
+      max-width: 440px;
+      display: grid;
+      gap: 0;
+    }
+
+    /* Notion: thin top bar progress */
+    .t-notion .progress {
+      width: 100%;
+      height: 2px;
+      background: var(--border);
+      border-radius: 1px;
+      margin-bottom: 40px;
+      overflow: hidden;
+    }
+    .t-notion .progress__fill {
+      height: 100%;
+      width: 40%;
+      background: var(--ink);
+      border-radius: 1px;
+    }
+
+    .t-notion .brand {
+      width: 26px; height: 26px;
+      border-radius: 4px;
+      background: var(--ink);
+      margin-bottom: 24px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .t-notion h1 {
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: -.5px;
+      color: var(--ink);
+      margin-bottom: 8px;
+      line-height: 1.2;
+    }
+    .t-notion .sub {
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+    .t-notion .ws-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 3px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--surface);
+      font-size: 11px;
+      color: var(--muted);
+      font-family: ui-monospace, monospace;
+      margin-bottom: 32px;
+    }
+    .t-notion .ws-pill span { color: var(--ink2); font-weight: 600; }
+    .t-notion .field { margin-bottom: 20px; }
+    .t-notion label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--ink2);
+      margin-bottom: 6px;
+    }
+    .t-notion input {
+      width: 100%;
+      height: 36px;
+      padding: 0 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--ink);
+      font: inherit;
+      font-size: 14px;
+      transition: border-color .1s, box-shadow .1s;
+    }
+    .t-notion input:focus {
+      outline: none;
+      border-color: var(--ink);
+      box-shadow: 0 0 0 2px rgba(55,53,47,.08);
+    }
+    .t-notion .btn-primary {
+      width: 100%;
+      height: 36px;
+      background: var(--ink);
+      border: none;
+      border-radius: var(--radius);
+      color: #fff;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-top: 24px;
+      transition: background .1s, opacity .1s;
+    }
+    .t-notion .btn-primary:hover { background: var(--accent-h); }
+    .t-notion .meta {
+      margin-top: 20px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .t-notion .meta-item {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .t-notion .meta-dot {
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--muted);
+    }
+
+    /* ══════════════════════════════════════════════════════
+       THEME 4 — VIOLET
+       Rich violet/purple, dark premium, gradient accents
+    ══════════════════════════════════════════════════════ */
+    .t-violet {
+      --bg:        #0d0d14;
+      --surface:   #13131f;
+      --surface2:  #1a1a2e;
+      --border:    #25253a;
+      --border2:   #30304a;
+      --ink:       #f0f0ff;
+      --ink2:      #a0a0c0;
+      --muted:     #5a5a80;
+      --accent:    #7b61ff;
+      --accent-h:  #6b50f0;
+      --accent2:   #c084fc;
+      --glow:      rgba(123,97,255,.2);
+      --radius:    8px;
+      --radius-sm: 6px;
+    }
+    .t-violet {
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    .t-violet .page {
+      min-height: calc(100vh - 53px);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 56px 20px 80px;
+      background:
+        radial-gradient(ellipse 70% 40% at 60% -10%, rgba(123,97,255,.12) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 30% at 100% 80%, rgba(192,132,252,.08) 0%, transparent 60%),
+        var(--bg);
+    }
+    .t-violet .shell {
+      width: 100%;
+      max-width: 460px;
+      display: grid;
+      gap: 20px;
+    }
+
+    /* progress: segmented bar */
+    .t-violet .progress {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .t-violet .progress__seg {
+      flex: 1;
+      height: 3px;
+      border-radius: 999px;
+      background: var(--border2);
+    }
+    .t-violet .progress__seg.done {
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+    }
+
+    .t-violet .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+      box-shadow: 0 0 0 1px rgba(123,97,255,.08),
+                  0 20px 40px rgba(0,0,0,.4);
+    }
+    .t-violet .brand {
+      width: 34px; height: 34px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%);
+      margin-bottom: 22px;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 14px var(--glow);
+    }
+    .t-violet h1 {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -.3px;
+      color: var(--ink);
+      margin-bottom: 6px;
+    }
+    .t-violet .sub {
+      font-size: 13px;
+      color: var(--ink2);
+      margin-bottom: 24px;
+      line-height: 1.55;
+    }
+    .t-violet .ws-pill {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 4px 10px;
+      border: 1px solid var(--border2);
+      border-radius: 999px;
+      background: var(--surface2);
+      font-size: 11px;
+      color: var(--muted);
+      font-family: ui-monospace, monospace;
+      margin-bottom: 22px;
+    }
+    .t-violet .ws-pill span { color: var(--ink2); font-weight: 600; }
+    .t-violet .field { margin-bottom: 14px; }
+    .t-violet label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--ink2);
+      margin-bottom: 5px;
+    }
+    .t-violet input {
+      width: 100%;
+      height: 38px;
+      padding: 0 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-sm);
+      color: var(--ink);
+      font: inherit;
+      font-size: 13px;
+      transition: border-color .12s, box-shadow .12s;
+    }
+    .t-violet input:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--glow);
+    }
+    .t-violet .btn-primary {
+      width: 100%;
+      height: 40px;
+      background: linear-gradient(135deg, var(--accent) 0%, #6a4de8 100%);
+      border: none;
+      border-radius: var(--radius);
+      color: #fff;
+      font: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-top: 22px;
+      transition: opacity .15s, box-shadow .15s;
+      box-shadow: 0 4px 16px var(--glow);
+    }
+    .t-violet .btn-primary:hover {
+      opacity: .9;
+      box-shadow: 0 6px 20px rgba(123,97,255,.35);
+    }
+    .t-violet .meta {
+      margin-top: 18px;
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+    }
+    .t-violet .meta-item {
+      display: flex; align-items: center; gap: 5px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .t-violet .meta-dot {
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    /* ── Shared input placeholder coloring ────────────────── */
+    input::placeholder { opacity: 1; }
+    .t-linear input::placeholder { color: #404050; }
+    .t-figma  input::placeholder { color: #bbb; }
+    .t-notion input::placeholder { color: #bbb8b3; }
+    .t-violet input::placeholder { color: #353550; }
+
+    /* ── Badge labels ─────────────────────────────────────── */
+    .theme-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 10px;
+    }
+    .theme-badge__swatch {
+      width: 10px; height: 10px;
+      border-radius: 3px;
+    }
+    .theme-badge__text {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    /* tiny Nimbus N */
+    .n-icon {
+      font-size: 13px;
+      font-weight: 800;
+      color: #fff;
+      line-height: 1;
+    }
+  </style>
+</head>
+<body>
+
+<nav class="picker">
+  <span class="picker__label">Theme</span>
+  <button class="tab active" onclick="show('linear')">① Linear</button>
+  <button class="tab"        onclick="show('figma')">② Figma</button>
+  <button class="tab"        onclick="show('notion')">③ Notion</button>
+  <button class="tab"        onclick="show('violet')">④ Violet</button>
+</nav>
+
+<!-- ════════════════════════════════════════════════
+     FRAME 1: LINEAR
+════════════════════════════════════════════════ -->
+<div id="f-linear" class="frame t-linear active">
+  <div class="page">
+    <div class="shell">
+
+      <div class="theme-badge">
+        <div class="theme-badge__swatch" style="background:#5e6ad2"></div>
+        <span class="theme-badge__text" style="color:#5e6ad2">Linear — Indigo / Dark</span>
+      </div>
+
+      <!-- progress -->
+      <div class="progress">
+        <div class="progress__dots">
+          <div class="progress__dot done"></div>
+          <div class="progress__dot done"></div>
+          <div class="progress__dot active"></div>
+          <div class="progress__dot"></div>
+          <div class="progress__dot"></div>
+        </div>
+        <span>Step 3 of 5</span>
+      </div>
+
+      <div class="card">
+        <div class="brand"><span class="n-icon">N</span></div>
+
+        <h1>Connect your workspace</h1>
+        <p class="sub">Nimbus encrypts your credentials at rest and uses them only for this workspace.</p>
+
+        <div class="ws-pill">Workspace <span>acme-corp</span></div>
+
+        <div class="field">
+          <label>OpenRouter API key</label>
+          <input type="password" placeholder="sk-or-…" value="sk-or-v1-••••••••••••••••">
+        </div>
+        <div class="field">
+          <label>AWS access key ID</label>
+          <input type="password" placeholder="AKIA…" value="AKIA••••••••••••••••">
+        </div>
+        <div class="field">
+          <label>AWS region</label>
+          <input type="text" value="us-east-1">
+        </div>
+        <div class="field">
+          <label>S3 bucket</label>
+          <input type="text" placeholder="my-nimbus-bucket">
+        </div>
+
+        <button class="btn-primary">Save configuration →</button>
+
+        <div class="meta">
+          <div class="meta-item"><div class="meta-dot"></div> HTTPS only</div>
+          <div class="meta-item"><div class="meta-dot"></div> KMS encrypted</div>
+          <div class="meta-item"><div class="meta-dot"></div> Never in Slack messages</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════
+     FRAME 2: FIGMA
+════════════════════════════════════════════════ -->
+<div id="f-figma" class="frame t-figma">
+  <div class="page">
+    <div class="shell">
+
+      <div class="theme-badge">
+        <div class="theme-badge__swatch" style="background:#0d99ff"></div>
+        <span class="theme-badge__text" style="color:#0d99ff">Figma — Blue / Light</span>
+      </div>
+
+      <!-- progress: morphing dot indicators -->
+      <div class="progress">
+        <div class="progress__dot done"></div>
+        <div class="progress__dot done"></div>
+        <div class="progress__dot active"></div>
+        <div class="progress__dot"></div>
+        <div class="progress__dot"></div>
+      </div>
+
+      <div class="card">
+        <div class="brand"><span class="n-icon">N</span></div>
+
+        <h1>Connect your workspace</h1>
+        <p class="sub">Nimbus encrypts your credentials at rest and uses them only for this workspace. Rotate anytime.</p>
+
+        <div class="ws-pill">✦ acme-corp [T0123XYZ]</div>
+
+        <div class="field">
+          <label>OpenRouter API key</label>
+          <input type="password" placeholder="sk-or-…" value="sk-or-v1-••••••••••••••••">
+        </div>
+        <div class="field">
+          <label>AWS access key ID</label>
+          <input type="password" placeholder="AKIA…" value="AKIA••••••••••••••••">
+        </div>
+        <div class="field">
+          <label>AWS region</label>
+          <input type="text" value="us-east-1">
+        </div>
+        <div class="field">
+          <label>S3 bucket</label>
+          <input type="text" placeholder="my-nimbus-bucket">
+        </div>
+
+        <button class="btn-primary">Save configuration</button>
+
+        <div class="meta">
+          <div class="meta-item"><div class="meta-dot"></div> HTTPS only</div>
+          <div class="meta-item"><div class="meta-dot"></div> KMS encrypted</div>
+          <div class="meta-item"><div class="meta-dot"></div> Never in Slack messages</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════
+     FRAME 3: NOTION
+════════════════════════════════════════════════ -->
+<div id="f-notion" class="frame t-notion">
+  <div class="page">
+    <div class="shell">
+
+      <div class="theme-badge">
+        <div class="theme-badge__swatch" style="background:#37352f"></div>
+        <span class="theme-badge__text" style="color:#37352f">Notion — Warm Cream / Monochrome</span>
+      </div>
+
+      <!-- thin progress bar -->
+      <div class="progress">
+        <div class="progress__fill"></div>
+      </div>
+
+      <div class="brand"><span class="n-icon" style="color:#eeeae4">N</span></div>
+
+      <h1>Connect your workspace</h1>
+      <p class="sub">Nimbus encrypts your credentials at rest. Rotate them anytime by reinstalling the app.</p>
+
+      <div class="ws-pill">Workspace <span>acme-corp</span></div>
+
+      <div class="field">
+        <label>OpenRouter API key</label>
+        <input type="password" placeholder="sk-or-…" value="sk-or-v1-••••••••••••••••">
+      </div>
+      <div class="field">
+        <label>AWS access key ID</label>
+        <input type="password" placeholder="AKIA…" value="AKIA••••••••••••••••">
+      </div>
+      <div class="field">
+        <label>AWS region</label>
+        <input type="text" value="us-east-1">
+      </div>
+      <div class="field">
+        <label>S3 bucket</label>
+        <input type="text" placeholder="my-nimbus-bucket">
+      </div>
+
+      <button class="btn-primary">Save configuration</button>
+
+      <div class="meta">
+        <div class="meta-item"><div class="meta-dot"></div> HTTPS only</div>
+        <div class="meta-item"><div class="meta-dot"></div> KMS encrypted</div>
+        <div class="meta-item"><div class="meta-dot"></div> Never in Slack messages</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════
+     FRAME 4: VIOLET
+════════════════════════════════════════════════ -->
+<div id="f-violet" class="frame t-violet">
+  <div class="page">
+    <div class="shell">
+
+      <div class="theme-badge">
+        <div class="theme-badge__swatch" style="background:#7b61ff"></div>
+        <span class="theme-badge__text" style="color:#a080ff">Violet — Premium Dark</span>
+      </div>
+
+      <!-- segmented progress bar -->
+      <div class="progress">
+        <div class="progress__seg done"></div>
+        <div class="progress__seg done"></div>
+        <div class="progress__seg done"></div>
+        <div class="progress__seg"></div>
+        <div class="progress__seg"></div>
+      </div>
+
+      <div class="card">
+        <div class="brand"><span class="n-icon">N</span></div>
+
+        <h1>Connect your workspace</h1>
+        <p class="sub">Nimbus encrypts your credentials at rest and uses them only for this workspace.</p>
+
+        <div class="ws-pill">Workspace <span>acme-corp</span></div>
+
+        <div class="field">
+          <label>OpenRouter API key</label>
+          <input type="password" placeholder="sk-or-…" value="sk-or-v1-••••••••••••••••">
+        </div>
+        <div class="field">
+          <label>AWS access key ID</label>
+          <input type="password" placeholder="AKIA…" value="AKIA••••••••••••••••">
+        </div>
+        <div class="field">
+          <label>AWS region</label>
+          <input type="text" value="us-east-1">
+        </div>
+        <div class="field">
+          <label>S3 bucket</label>
+          <input type="text" placeholder="my-nimbus-bucket">
+        </div>
+
+        <button class="btn-primary">Save configuration</button>
+
+        <div class="meta">
+          <div class="meta-item"><div class="meta-dot"></div> HTTPS only</div>
+          <div class="meta-item"><div class="meta-dot"></div> KMS encrypted</div>
+          <div class="meta-item"><div class="meta-dot"></div> Never in Slack messages</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function show(theme) {
+    document.querySelectorAll('.frame').forEach(f => f.classList.remove('active'));
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.getElementById('f-' + theme).classList.add('active');
+    event.target.classList.add('active');
+  }
+</script>
+</body>
+</html>

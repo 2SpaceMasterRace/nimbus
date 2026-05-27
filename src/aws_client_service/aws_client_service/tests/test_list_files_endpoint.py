@@ -1,0 +1,117 @@
+"""Unit tests for the list files endpoint in the AWS S3 FastAPI service."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import pytest
+from cloud_storage_api import InvalidObjectNameError, ObjectInfo, StorageBackendError
+from fastapi.testclient import TestClient
+
+pytestmark = pytest.mark.unit
+
+HTTP_OK = 200
+HTTP_BAD_REQUEST = 400
+HTTP_UNPROCESSABLE = 422
+HTTP_BAD_GATEWAY = 502
+
+
+def test_list_files_returns_matching_files(
+    client: TestClient,
+    mock_storage_client: MagicMock,
+) -> None:
+    """GET /files returns a list of matching object metadata."""
+    mock_storage_client.list_files.return_value = [
+        ObjectInfo(object_name="docs/a.txt"),
+        ObjectInfo(object_name="docs/b.txt"),
+    ]
+
+    response = client.get(
+        "/files",
+        params={"container": "docs-bucket", "prefix": "docs/"},
+    )
+
+    assert response.status_code == HTTP_OK
+    body = response.json()
+    expected_count = 2
+    assert len(body) == expected_count
+    assert body[0]["object_name"] == "docs/a.txt"
+    assert body[1]["object_name"] == "docs/b.txt"
+    mock_storage_client.list_files.assert_called_once_with("docs-bucket", "docs/")
+
+
+def test_list_files_returns_empty_list(
+    client: TestClient,
+    mock_storage_client: MagicMock,
+) -> None:
+    """GET /files returns an empty list when no files match."""
+    mock_storage_client.list_files.return_value = []
+
+    response = client.get(
+        "/files",
+        params={"container": "docs-bucket", "prefix": "missing/"},
+    )
+
+    assert response.status_code == HTTP_OK
+    assert response.json() == []
+    mock_storage_client.list_files.assert_called_once_with("docs-bucket", "missing/")
+
+
+def test_list_files_requires_container(client: TestClient) -> None:
+    """GET /files returns 422 when container is missing."""
+    response = client.get("/files", params={"prefix": "docs/"})
+
+    assert response.status_code == HTTP_UNPROCESSABLE
+
+
+def test_list_files_invalid_prefix_returns_400(
+    client: TestClient,
+    mock_storage_client: MagicMock,
+) -> None:
+    """GET /files maps invalid prefixes to a caller error."""
+    mock_storage_client.list_files.side_effect = InvalidObjectNameError("bad prefix")
+
+    response = client.get(
+        "/files",
+        params={"container": "docs-bucket", "prefix": "../bad"},
+    )
+
+    assert response.status_code == HTTP_BAD_REQUEST
+    assert response.json() == {"detail": "bad prefix"}
+
+
+def test_list_files_storage_error(
+    client: TestClient,
+    mock_storage_client: MagicMock,
+) -> None:
+    """GET /files returns 502 when the storage backend raises an exception."""
+    mock_storage_client.list_files.side_effect = StorageBackendError("backend failure")
+
+    response = client.get(
+        "/files",
+        params={"container": "docs-bucket", "prefix": "docs/"},
+    )
+
+    assert response.status_code == HTTP_BAD_GATEWAY
+    assert response.json() == {"detail": "List files failed due to a storage error"}
+
+
+def test_list_files_defaults_prefix_to_empty(
+    client: TestClient,
+    mock_storage_client: MagicMock,
+) -> None:
+    """GET /files lists the whole container when prefix is omitted."""
+    mock_storage_client.list_files.return_value = [
+        ObjectInfo(object_name="a.txt"),
+        ObjectInfo(object_name="b.txt"),
+    ]
+
+    response = client.get("/files", params={"container": "docs-bucket"})
+
+    assert response.status_code == HTTP_OK
+    body = response.json()
+    expected_count = 2
+    assert len(body) == expected_count
+    assert body[0]["object_name"] == "a.txt"
+    assert body[1]["object_name"] == "b.txt"
+    mock_storage_client.list_files.assert_called_once_with("docs-bucket", "")
