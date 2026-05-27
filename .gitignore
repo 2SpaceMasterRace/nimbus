@@ -58,6 +58,15 @@ token.json
 # Environment variables
 .env
 .env.*
+*.env
 
 # Logs
 *.log
+
+# Sphinx build output (generated, not source-controlled)
+docs/build/
+
+# Assignment PDFs and session files (local only, not for version control)
+*.pdf
+session-prompt.md
+plans.md

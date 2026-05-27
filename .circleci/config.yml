@@ -6,6 +6,8 @@ executors:
     docker:
       - image: cimg/python:3.14.3
 
+orbs:
+  aws-cli: circleci/aws-cli@5.4.1
 #Modular Commands 
 commands:
   setup-uv:
@@ -24,6 +26,15 @@ commands:
       - run:
           name: Sync dependencies
           command: uv sync --all-packages
+  aws-setup:
+    description: "Set up AWS CLI with the provided credentials"
+    steps:
+      - aws-cli/setup:
+          role_arn: ${AWS_ROLE_ARN}
+          region: ${AWS_REGION}
+          role_session_name: "ospsd-session"
+          session_duration: "1800"
+
 jobs:
   lint:
     executor: python-executor
@@ -35,8 +46,89 @@ jobs:
           name: Ruff Check
           command: |
             uv run ruff check 
+      - run:
+          name: Ruff — format check
+          command: uv run ruff format --check .
+      - run:
+          name: Mypy — strict type checking
+          command: uv run mypy --strict .
+  
+  unit-tests:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - install-dependencies
+      - run:
+          name: Run unit tests with coverage
+          command: |
+            uv run pytest \
+              src/aws_client_impl/tests/ \
+              --junitxml=test-results/unit/results.xml \
+              --cov-report=xml:coverage/unit-coverage.xml \
+              --cov-report=html:coverage/unit-html \
+              -v
+      - store_test_results:
+          path: test-results/unit
+      - store_artifacts:
+          path: coverage/unit-html
+          destination: coverage/unit
+  integration-tests:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - install-dependencies
+      - run:
+          name: Run integration tests (DI wiring verification)
+          command: |
+            uv run pytest \
+              tests/integration/ \
+              --junitxml=test-results/integration/results.xml \
+              --cov-report=xml:coverage/integration-coverage.xml \
+              --cov-report=html:coverage/integration-html \
+              --cov-fail-under=0 \
+              -v
+      - store_test_results:
+          path: test-results/integration
+      - store_artifacts:
+          path: coverage/integration-html
+          destination: coverage/integration
+
+  e2e-tests:
+    executor: python-executor
+    steps:
+      - checkout
+      - setup-uv
+      - install-dependencies
+      - aws-setup
+      - run:
+          name: Run E2E tests against real AWS infrastructure
+          command: |
+            uv run pytest \
+              tests/e2e \
+              --junitxml=test-results/e2e/results.xml \
+              --cov-report=xml:coverage/e2e-coverage.xml \
+              --cov-report=html:coverage/e2e-html \
+              --cov-fail-under=0 \
+              -v
+      - store_test_results:
+          path: test-results/e2e
+      - store_artifacts:
+          path: coverage/e2e-html
+          destination: coverage/e2e
+
 workflows:
-  version: 2
   main:
     jobs:
       - lint
+      - unit-tests:
+          requires:
+            - lint
+      - integration-tests:
+          requires:
+            - unit-tests
+      - e2e-tests:
+          context: aws-ospsd
+          requires:
+            - integration-tests

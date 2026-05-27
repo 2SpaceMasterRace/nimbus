@@ -1,68 +1,218 @@
-# ospsd-team-2
-Welcome to the official repository of Team 2 for the class CS-GY 9223/CS-UY 3943 - Special Topics in Computer Science : Open Source and Professional Software Development! 
+# Cloud Storage Client
 
-# Installation
-You can install with pip (WIP): 
-```shell
-$ pip install [our-project]
+[![CircleCI](https://dl.circleci.com/status-badge/img/gh/ospsd-team-2/ospsd-team-2/tree/hw-1.svg?style=shield)](https://dl.circleci.com/status-badge/redirect/gh/ospsd-team-2/ospsd-team-2/tree/hw-1)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://circleci.com/gh/ospsd-team-2/ospsd-team-2)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue)](https://python.org)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
+A clean, provider-agnostic Python interface for cloud object storage, with a concrete AWS S3 implementation. Built for NYU OSPSD Spring '26.
+
+---
+
+## What This Project Does
+
+Working with AWS S3 directly means dealing with `boto3`, regions, credentials, multipart uploads, and AWS-specific types — everywhere in your code. This project hides all of that behind a simple, stable interface.
+
+You write code against `CloudStorageClient`. You never import `boto3`. When you need S3, you import `aws_client_impl` once and the implementation wires itself in automatically. If a future team swaps S3 for GCS or Dropbox, none of your application code changes — only the implementation package does.
+
+```python
+import aws_client_impl                              # registers S3 via dependency injection
+from cloud_storage_client_api.src.factory import get_client
+
+client = get_client()                              # returns an S3Client, typed as CloudStorageClient
+files  = client.list_files("")                     # list all objects in your bucket
+client.upload_file("local/data.csv", "data.csv")   # upload a file
+client.download_file("my-bucket", "data.csv", "local/copy.csv")  # download it back
 ```
 
-## Contributing 
-To start developing locally, create a fork of this repository and clone your fork with the following command replacing YOUR-USERNAME with your GitHub username:
-```shell
-$ git clone git@github.com:YOUR-USERNAME/ospsd-team-2
+---
+
+## Architecture
+
+The project is a [`uv` workspace](https://docs.astral.sh/uv/concepts/workspaces/) with two installable packages:
+
 ```
-[Install uv](https://docs.astral.sh/uv/getting-started/installation/) if you haven't already done it before:
+ospsd-team-2/
+├── src/
+│   ├── cloud_storage_client_api/   # The abstract interface — no AWS deps, no boto3
+│   │   └── src/
+│   │       ├── client.py           # CloudStorageClient ABC (the contract)
+│   │       └── factory.py          # get_client() / register_client() DI factory
+│   └── aws_client_impl/            # The concrete AWS S3 implementation
+│       └── src/
+│           ├── __init__.py         # Auto-registers with factory on import
+│           └── s3_client.py        # S3Client — implements CloudStorageClient via boto3
+├── tests/
+│   ├── integration/                # Tests that verify DI wiring works end-to-end
+│   └── e2e/                        # Full workflow tests against real AWS infrastructure
+├── main.py                         # Example entry point demonstrating the full flow
+├── pyproject.toml                  # Workspace root — all tool config lives here
+└── docs/                           # Sphinx documentation source
+```
+
+### How Dependency Injection Works
+
+The interface package (`cloud_storage_client_api`) has **zero knowledge** of AWS or boto3. It only knows about `CloudStorageClient` and the factory.
+
+When you run `import aws_client_impl`, Python executes `aws_client_impl/src/__init__.py`, which calls:
+
+```python
+register_client(get_client_impl)
+```
+
+From that point forward, `get_client()` returns a fully configured `S3Client`. Your application code never needs to know this happened.
+
+```
+┌─────────────────────────┐        ┌──────────────────────────┐
+│  cloud_storage_client_api│        │    aws_client_impl        │
+│  ─────────────────────── │        │  ───────────────────────  │
+│  CloudStorageClient (ABC)│◄───────│  S3Client                 │
+│  get_client()            │        │  get_client_impl()        │
+│  register_client()       │◄───────│  __init__.py registers    │
+└─────────────────────────┘        └──────────────────────────┘
+         ▲
+         │  callers only ever touch this side
+```
+
+---
+
+## Prerequisites
+
+- **Python 3.12+** — check with `python --version`
+- **uv** — a fast, all-in-one Python package manager ([install guide](https://docs.astral.sh/uv/getting-started/installation/))
+- **An AWS account** — needed for E2E tests and running `main.py` against real S3 (unit and integration tests run without it)
+
+Install `uv`:
 
 ```shell
 # macOS / Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Windows (PowerShell)
-irm https://astral.sh/uv/install.ps1 | iex
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-You can now install the project's dependencies using:
+---
+
+## Installation & Setup
+
 ```shell
-$ cd ospsd-team-2
-$ uv sync --all-packages
-```
-To test if everything works, run the tests:
-```shell
-$ uv run pytest tests/
+git clone git@github.com:ospsd-team-2/ospsd-team-2.git
+cd ospsd-team-2
+uv sync --all-packages
 ```
 
-Create a feature branch to start developing, and open a pull-request once it's ready to be merged. One of the core team members will take a look and approve accordingly.
+This creates a `.venv` and installs all workspace packages plus dev tools in one step. No `pip`, no manual virtualenv.
+
+---
+
+## AWS Credentials
+
+The client reads all credentials from environment variables. **Never hardcode secrets.**
+
+```shell
+export AWS_ACCESS_KEY_ID="your_access_key_id"
+export AWS_SECRET_ACCESS_KEY="your_secret_access_key"
+export AWS_REGION="us-east-1"
+export AWS_BUCKET_NAME="your-bucket-name"
+```
+
+You can put these in a local `.env` file — it is listed in `.gitignore` and will never be committed.
+
+> **Tip:** You only need credentials to run `main.py` or the E2E tests against real S3. Unit and integration tests mock all AWS calls and work without credentials.
+
+> **Note:** CI never uses long-lived access keys. The CircleCI pipeline authenticates via OIDC and assumes an IAM role directly. See [CONTRIBUTING.md](CONTRIBUTING.md#cicd) for setup instructions.
+
+---
+
+## Running the Application
+
+With credentials set:
+
+```shell
+uv run python main.py
+```
+
+This creates a client via DI, lists files in your bucket, and prints them.
+
+---
+
+## Toolchain
+
+All commands run from the project root:
+
+```shell
+# Run all tests (unit + integration + e2e)
+uv run pytest
+
+# Run only unit tests (no AWS credentials needed)
+uv run pytest src/
+
+# Run only integration tests (DI wiring, no AWS needed)
+uv run pytest tests/integration/
+
+# Run E2E tests (requires AWS credentials)
+uv run pytest tests/e2e/ -m "not local_credentials"
+
+# Lint (ruff — check for issues)
+uv run ruff check .
+
+# Format (auto-fix style)
+uv run ruff format .
+
+# Type check (mypy strict)
+uv run mypy --strict .
+
+# Build docs (Sphinx)
+uv run sphinx-build docs/source docs/build/html
+
+# Live-reload docs server
+uv run sphinx-autobuild docs/source docs/build/html
+```
+
+---
+
+## Documentation
+
+Built with [Sphinx](https://www.sphinx-doc.org/) and the [Furo](https://pradyunsg.me/furo/) theme. Source files live in `docs/source/`. After building, open `docs/build/html/index.html` in your browser.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full contribution guide — environment setup, coding standards, testing strategy, how to open a PR, and how to configure AWS for local testing.
+
+See [DESIGN.md](DESIGN.md) for architecture decisions and context.
+
+---
 
 ## Dependencies
-These project is built on these excellent tools:
 
-* `ruff` - An extremely fast Python linter and code formatter, written in Rust. 
-* `ty` - An extremely fast Python type checker and language server, written in Rust.
-* `mypy` - An optional, open-source static type checker for Python that boosts code quality, safety, and readability by analyzing type hints (PEP 484) without running code.
-* `pytest` - An testing framework that makes it easy to write small, readable tests, and can scale to support complex functional testing for applications and libraries.
-* `sphinx` - An open-source documentation generator that translates a set of plain text source files into various output formats, such as HTML, PDF, and man pages.
-* `sphinx-autobuild` - A command-line tool that provides a development server for Sphinx documentation projects.
-* `furo` -  A clean customizable documentation theme for Sphinx 
-* `myst-parser` - A Sphinx and Docutils extension to parse MyST, a rich and extensible flavour of Markdown for authoring technical and scientific documentation.
+| Package | Purpose |
+|---|---|
+| `boto3` | AWS SDK for Python |
+| `structlog` | Structured, machine-readable logging |
+| `ruff` | Linter and formatter (replaces flake8 + isort + black) |
+| `mypy` | Static type checker, run in `--strict` mode |
+| `pytest` / `pytest-cov` / `pytest-mock` | Testing framework + coverage + mocking |
+| `sphinx` / `furo` / `myst-parser` / `sphinx-autobuild` | Documentation |
 
-For CI/CD, we use:
-* `CircleCI` -  A continuous integration and continuous delivery platform that automates the build, test, and deployment of software.
-* `coverage.py` -  A tool for measuring the code coverage of Python programs, typically during testing.
+---
 
+## Team
 
-# Team 
-## Core Members:
-1. [Ajay Temal](mailto:at5722@nyu.edu)
-2. [Aarav Agrawal](mailto:aa10698@nyu.edu)
-3. [Daniel J. Barros](mailto:djb10118@nyu.edu)
-4. [Hari Varsha V](mailto:hv2241@nyu.edu)
-5. [Nicholas Maspons](mailto:nem8891@nyu.edu)
+| Name | Email |
+|---|---|
+| Ajay Temal | at5722@nyu.edu |
+| Aarav Agrawal | aa10698@nyu.edu |
+| Daniel J. Barros | djb10118@nyu.edu |
+| Hari Varsha V | hv2241@nyu.edu |
+| Nicholas Maspons | nem8891@nyu.edu |
 
-## TA's:
-1. [Iván Aristy Eusebio](mailto:iae225@stern.nyu.edu)
-2. [Adithya Balachandra](mailto:ab12095@nyu.edu)
-3. [Aranya Aryaman](mailto:aa12939@nyu.edu) 
+**TAs:** Iván Aristy Eusebio, Adithya Balachandra, Aranya Aryaman
 
-# License
-This project is licensed under the **MIT License**. See the `LICENSE` file for details.
+---
+
+## License
+
+MIT — see [`LICENSE`](LICENSE) for details.

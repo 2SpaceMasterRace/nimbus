@@ -11,7 +11,14 @@ authors = [
     { name = "Nicholas Maspons", email = "nem8891@nyu.edu" },
 ]
 
-requires-python = ">=3.14"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3-stubs>=1.42.54",
+    "boto3[crt]>=1.42.54",
+    "coverage>=7.13.4",
+    "rich>=14.3.3",
+    "structlog>=25.5.0",
+]
 
 [tool.uv]
 package = false
@@ -30,10 +37,71 @@ aws-client-impl = { workspace = true }
 dev = [
     "mypy>=1.19.1",
     "pytest>=9.0.2",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
     "ruff>=0.15.0",
-    "ty>=0.0.16",
     "furo>=2025.12.19",
     "myst-parser>=5.0.0",
     "sphinx-autobuild>=2024.10.3",
     "sphinx>=9.1.0",
 ]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "S101",   # Assertions are valid for precondition checks; see rubric note on testing
+    "INP001", # tests/ intentionally has no __init__.py per rubric requirements
+    "COM812", # Conflicts with ruff formatter's trailing-comma handling (ruff docs recommendation)
+    "D203",   # Incompatible with D211 (no-blank-line-before-class); ruff picks one, we suppress both warnings
+    "D213",   # Incompatible with D212 (multi-line-summary-first-line); ruff picks one, we suppress both warnings
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/test_*.py" = ["S101"] # Justification: Same as [tool.ruff.lint]
+
+[tool.mypy]
+strict = true
+mypy_path = [
+    "src/aws_client_impl",
+    "src/cloud_storage_client_api",
+]
+
+[[tool.mypy.overrides]]
+# boto3/botocore ship partial stubs via boto3-stubs; suppress any residual gaps.
+module = [
+    "boto3.*",
+    "botocore.*",
+]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Test files import private helpers and duck-typed fixtures not visible to mypy.
+module = ["tests.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests", "src/*/tests"]
+addopts = ["--cov", "--cov-report=term-missing", "--import-mode=importlib"]
+markers = [
+    "unit: marks tests as unit tests (fast, isolated)",
+    "integration: marks tests as integration tests (medium speed, real dependencies)",
+    "regression: marks tests that verify previously fixed bugs have not re-emerged or core functionality hasn't degraded",
+    "property: marks property-based tests (using Hypothesis) that generate a wide range of inputs to verify invariant behaviors",
+    "e2e: marks tests as end-to-end tests (slow, full system)",
+    "circleci: marks tests that can run in CI/CD environments without local credentials",
+    "local_credentials: marks tests that require local credentials.json or token.json files",
+]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*", "*/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 80 # Justification: 80% is the sweet spot to make sure the code is well-tasted and not much developer hours are poured into testing. Refer Goodhart's Law.
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+
